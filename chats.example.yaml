@@ -1,0 +1,12 @@
+# Chats to monitor — title must match what you see in WhatsApp (unique substring is enough).
+
+chats:
+  - title: "Example jobs group"
+    enabled: true
+    # Optional overrides (otherwise config.yaml defaults apply):
+    # include_keywords: ["DevOps", "SRE"]
+    # exclude_keywords: ["crypto"]
+    # require_url: true
+
+  - title: "Another group"
+    enabled: false

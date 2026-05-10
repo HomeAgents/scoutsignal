@@ -1,0 +1,76 @@
+# ScoutSignal
+
+**ScoutSignal** opens **WhatsApp Web** in a **persistent** browser profile, reads messages from chats you list, applies keyword / URL filters, **dedupes** with SQLite, and can **email** you matches.
+
+## What I need from you (human steps)
+
+ScoutSignal cannot log in to your WhatsApp account by itself the first time. Please provide / do the following:
+
+1. **Paths** — Run `scoutsignal init ~/scoutsignal-config` (or your folder). That creates `config.yaml`, `chats.yaml`, `.scoutsignal/browser-profile`, and `state.db` paths.
+2. **WhatsApp** — First `scoutsignal run`: scan the **QR code** in the opened browser. The same `user_data_dir` keeps you logged in later.
+3. **Chat titles** — In WhatsApp Web, open a group/DM, then run:
+   ```bash
+   scoutsignal probe --config config.yaml --chats chats.yaml
+   ```
+   Copy the printed line into `chats.yaml` as `title:` (unique substring is enough).
+4. **SMTP** — Gmail: use an **app password**, not your normal password. Set:
+   ```bash
+   export SCOUTSIGNAL_SMTP_PASSWORD='....'
+   ```
+   and set `email.from_addr` / `email.to_addrs` in `config.yaml`.
+5. **Keywords** — Edit `defaults.include_keywords` / `exclude_keywords` (and per-chat overrides in `chats.yaml`) so matches look like real job posts for you.
+
+Everything else below is automated once the above is done.
+
+## Important
+
+- Driving **WhatsApp Web** with **Playwright** may conflict with **WhatsApp / Meta** terms of use. Use at your own risk.
+- The UI changes; if search or messages break, update selectors in `src/scoutsignal/whatsapp.py`.
+- **Privacy:** error **screenshots** may contain chat content; they go under `screenshots/` next to your `state.db` unless you override `diagnostics.screenshots_dir`.
+
+## Where state lives
+
+| Item | Typical location (after `init`) |
+|------|----------------------------------|
+| Browser session (stay logged in) | `<config-dir>/.scoutsignal/browser-profile` |
+| SQLite dedupe / seed flags | `<config-dir>/.scoutsignal/state.db` |
+| Error screenshots | `<config-dir>/.scoutsignal/screenshots/` |
+
+## Setup
+
+```bash
+cd scoutsignal
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
+playwright install chromium
+```
+
+## Commands
+
+```bash
+scoutsignal init ~/scoutsignal-config
+cd ~/scoutsignal-config
+# edit config.yaml + chats.yaml; export SCOUTSIGNAL_SMTP_PASSWORD
+
+scoutsignal config-check --config config.yaml --chats chats.yaml
+scoutsignal probe --config config.yaml --chats chats.yaml
+scoutsignal run --config config.yaml --chats chats.yaml --dry-run
+scoutsignal run --config config.yaml --chats chats.yaml
+scoutsignal run --config config.yaml --chats chats.yaml --loop
+```
+
+- **`seed_on_first_scan`** (in `config.yaml`): first time each chat is scanned, fingerprints are stored **without** email, to avoid a burst of old posts.
+
+## Background on macOS
+
+See **`extras/com.scoutsignal.example.plist`** and **`extras/README.md`** for a `launchd` template. You must edit paths and SMTP env; do an **interactive** login first with `scoutsignal run` using the same `user_data_dir`.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `config.yaml` | Browser profile, intervals, keywords, SMTP, diagnostics |
+| `chats.yaml` | Which chats to watch; optional per-chat keyword overrides |
+
+Templates: `config.example.yaml`, `chats.example.yaml`.

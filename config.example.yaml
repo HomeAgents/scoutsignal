@@ -1,0 +1,50 @@
+# Copy to config.yaml and adjust paths.
+
+browser:
+  # Persistent Chromium profile — stay logged in to WhatsApp Web after first QR scan.
+  user_data_dir: "~/.scoutsignal/browser-profile"
+  headless: false
+  # Optional: "chrome" to use Google Chrome instead of bundled Chromium
+  channel: null
+
+run:
+  poll_interval_seconds: 300
+  max_messages_per_chat: 120
+  # First time a chat is opened: only record messages (no emails) to avoid a burst of old posts.
+  seed_on_first_scan: true
+  whatsapp_url: "https://web.whatsapp.com"
+
+defaults:
+  include_keywords:
+    - DevOps
+    - SRE
+    - Platform
+    - Infrastructure
+    - Cloud
+    - Engineering Manager
+  exclude_keywords: []
+  require_url: false
+  min_text_length: 15
+
+email:
+  enabled: true
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  use_tls: true
+  from_addr: "you@gmail.com"
+  to_addrs:
+    - "you@gmail.com"
+  subject_prefix: "[ScoutSignal] "
+  password_env: SCOUTSIGNAL_SMTP_PASSWORD
+
+state:
+  sqlite_path: "~/.scoutsignal/state.db"
+
+# On scan errors, save a PNG next to state.db (screenshots/…) for debugging.
+diagnostics:
+  error_screenshots: true
+  # Optional override; default is <directory of state.sqlite_path>/screenshots
+  screenshots_dir: null
+
+logging:
+  level: INFO
