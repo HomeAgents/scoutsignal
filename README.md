@@ -20,6 +20,14 @@ ScoutSignal cannot log in to your WhatsApp account by itself the first time. Ple
    and set `email.from_addr` / `email.to_addrs` in `config.yaml`.
 5. **Keywords** — Edit `defaults.include_keywords` / `exclude_keywords` (and per-chat overrides in `chats.yaml`) so matches look like real job posts for you.
 
+**Optional:** In the same folder as `config.yaml`, create a file named `.env` (never commit it) with your app password, for example:
+
+```bash
+SCOUTSIGNAL_SMTP_PASSWORD=your-gmail-app-password
+```
+
+ScoutSignal loads that file automatically when it reads `config.yaml`. Gmail SMTP is `smtp.gmail.com`, port `587`, TLS on — same pattern as other apps that use `GMAIL_APP_PASSWORD` with a Google **app password** (not your normal account password).
+
 Everything else below is automated once the above is done.
 
 ## Important

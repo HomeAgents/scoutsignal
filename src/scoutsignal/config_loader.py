@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import yaml
+from dotenv import load_dotenv
 
 
 @dataclass
@@ -97,6 +98,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
+    # Optional secrets next to config (e.g. SCOUTSIGNAL_SMTP_PASSWORD); does not override existing env.
+    load_dotenv(config_path.parent / ".env")
     raw = load_yaml(config_path)
     chats_raw = load_yaml(chats_path)
 
