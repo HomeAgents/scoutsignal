@@ -8,6 +8,10 @@ browser:
   channel: null
   # BCP-47 UI locale. Use he-IL if WhatsApp Web is in Hebrew (buttons / search labels).
   locale: "en-US"
+  # Extra Chromium flags — useful for launchd / headless (fewer first-run popups).
+  extra_chromium_args:
+    - "--no-first-run"
+    - "--no-default-browser-check"
 
 run:
   poll_interval_seconds: 300

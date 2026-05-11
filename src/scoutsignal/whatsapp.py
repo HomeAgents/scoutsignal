@@ -31,6 +31,8 @@ def _launch_context(p: Playwright, cfg: BrowserConfig) -> BrowserContext:
     }
     if cfg.channel:
         kwargs["channel"] = cfg.channel
+    if cfg.extra_chromium_args:
+        kwargs["args"] = list(cfg.extra_chromium_args)
     return p.chromium.launch_persistent_context(**kwargs)
 
 

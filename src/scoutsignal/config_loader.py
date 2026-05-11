@@ -16,6 +16,8 @@ class BrowserConfig:
     channel: Optional[str] = None
     # BCP-47 locale (e.g. he-IL for Hebrew WhatsApp UI, en-US default).
     locale: str = "en-US"
+    # Extra Chromium CLI flags (e.g. --no-first-run) for quieter unattended launches.
+    extra_chromium_args: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -137,6 +139,10 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
 
     ud = browser.get("user_data_dir") or "~/.scoutsignal/browser-profile"
     sp = state.get("sqlite_path") or "~/.scoutsignal/state.db"
+    extra_raw = browser.get("extra_chromium_args") or browser.get("chromium_args") or []
+    if not isinstance(extra_raw, list):
+        extra_raw = []
+    extra_chromium_args = [str(x) for x in extra_raw if str(x).strip()]
 
     return AppConfig(
         browser=BrowserConfig(
@@ -144,6 +150,7 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             headless=bool(browser.get("headless", False)),
             channel=browser.get("channel"),
             locale=str(browser.get("locale") or "en-US"),
+            extra_chromium_args=extra_chromium_args,
         ),
         run=RunConfig(
             poll_interval_seconds=int(run.get("poll_interval_seconds", 300)),

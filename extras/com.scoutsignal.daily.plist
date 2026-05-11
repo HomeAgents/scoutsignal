@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily unattended ScoutSignal scan (macOS launchd).
+
+  1) chmod +x /path/to/scoutsignal/extras/scoutsignal-run.sh
+  2) Edit StartCalendarInterval (Hour 0-23, Minute 0-59) for your preferred local time.
+  3) Edit ProgramArguments: path to scoutsignal-run.sh (or set HOME-relative install).
+  4) cp com.scoutsignal.daily.plist ~/Library/LaunchAgents/
+  5) launchctl load ~/Library/LaunchAgents/com.scoutsignal.daily.plist
+
+  Put SCOUTSIGNAL_SMTP_PASSWORD in ~/scoutsignal-config/.env (not in this plist).
+  First WhatsApp login must be done once interactively (headless: false), same user_data_dir.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.scoutsignal.daily</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/scoutsignal-daily.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/scoutsignal-daily.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>SCOUTSIGNAL_CONFIG_DIR</key>
+    <string>/REPLACE/WITH/scoutsignal-config</string>
+    <key>SCOUTSIGNAL_VENV_BIN</key>
+    <string>/REPLACE/WITH/scoutsignal/.venv/bin/scoutsignal</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/REPLACE/WITH/scoutsignal/extras/scoutsignal-run.sh</string>
+  </array>
+</dict>
+</plist>
