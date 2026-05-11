@@ -7,6 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Optional
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from scoutsignal.config_loader import AppConfig, screenshots_dir_for
 from scoutsignal.matcher import (
     count_keyword_hits_in_messages,
@@ -28,6 +30,17 @@ from scoutsignal.whatsapp import (
 log = logging.getLogger(__name__)
 
 
+def _scan_exc_email_prefix(scan_exc: Optional[BaseException]) -> str:
+    if scan_exc is None:
+        return ""
+    if isinstance(scan_exc, PlaywrightTimeoutError):
+        return (
+            "NOTE: WhatsApp Web hit a browser timeout (slow UI, network, or a popup blocking clicks). "
+            "Partial results are below; close any overlay on WhatsApp and run again.\n\n"
+        )
+    return f"NOTE: Scan ended early ({type(scan_exc).__name__}). Partial results below.\n\n"
+
+
 def _emit_scan_email(
     cfg: AppConfig,
     *,
@@ -45,12 +58,7 @@ def _emit_scan_email(
             log.info("Email disabled; %s hits not mailed.", len(hits))
         return
 
-    prefix = ""
-    if scan_exc is not None:
-        prefix = (
-            f"NOTE: Scan ended early ({type(scan_exc).__name__}). "
-            f"Partial results below.\n\n"
-        )
+    prefix = _scan_exc_email_prefix(scan_exc)
 
     if dry_run:
         if cfg.email.always_send_summary:
@@ -122,58 +130,70 @@ def run_scan(cfg: AppConfig, *, dry_run: bool) -> list[Hit]:
                     seeded = store.is_seeded(ck)
                     zero_kw = {k: 0 for k in effective_include_keywords(cfg.defaults, chat)}
 
-                    open_deadline = time.monotonic() + float(cfg.run.open_chat_timeout_seconds)
-                    if not open_chat_by_title(page, chat.title, open_deadline=open_deadline):
-                        log.warning("Skipping chat (could not open): %s", chat.title)
+                    try:
+                        open_deadline = time.monotonic() + float(cfg.run.open_chat_timeout_seconds)
+                        if not open_chat_by_title(page, chat.title, open_deadline=open_deadline):
+                            log.warning("Skipping chat (could not open): %s", chat.title)
+                            summaries.append(
+                                ChatScanSummary(
+                                    chat.title,
+                                    0,
+                                    0,
+                                    dict(zero_kw),
+                                    "Could not open chat (search / WhatsApp UI).",
+                                )
+                            )
+                            continue
+
+                        messages = scrape_recent_messages(page, cfg.run.max_messages_per_chat)
+                        texts = [m.text for m in messages]
+                        log.info("Chat %r: scraped %s messages", chat.title, len(messages))
+                        kcounts = count_keyword_hits_in_messages(texts, chat, cfg.defaults)
+
+                        if cfg.run.seed_on_first_scan and not seeded:
+                            for m in messages:
+                                mr = match_message(ck, m.text, cfg.defaults, chat)
+                                store.add_fingerprint(ck, mr.fingerprint)
+                            store.mark_seeded(ck)
+                            log.info("Seeded chat %r — no alerts on first scan.", chat.title)
+                            summaries.append(ChatScanSummary(chat.title, len(messages), 0, kcounts, ""))
+                            continue
+
+                        chat_new_job_hits = 0
+                        for m in messages:
+                            mr = match_message(ck, m.text, cfg.defaults, chat)
+                            if store.has_fingerprint(ck, mr.fingerprint):
+                                continue
+                            store.add_fingerprint(ck, mr.fingerprint)
+                            if mr.matched:
+                                link = first_http_url(m.text) or ""
+                                preview = m.text.strip()
+                                if len(preview) > 1200:
+                                    preview = preview[:1200] + "…"
+                                hits.append(Hit(chat_title=chat.title, preview=preview, link=link))
+                                chat_new_job_hits += 1
+                                log.info("Hit in %s", chat.title)
+
+                        summaries.append(
+                            ChatScanSummary(
+                                chat.title,
+                                len(messages),
+                                chat_new_job_hits,
+                                kcounts,
+                                "",
+                            )
+                        )
+                    except PlaywrightTimeoutError:
+                        log.warning("Playwright timeout in chat %r — skipping.", chat.title)
                         summaries.append(
                             ChatScanSummary(
                                 chat.title,
                                 0,
                                 0,
                                 dict(zero_kw),
-                                "Could not open chat (search / WhatsApp UI).",
+                                "WhatsApp UI timed out (slow network or a popup blocking clicks).",
                             )
                         )
-                        continue
-
-                    messages = scrape_recent_messages(page, cfg.run.max_messages_per_chat)
-                    texts = [m.text for m in messages]
-                    log.info("Chat %r: scraped %s messages", chat.title, len(messages))
-                    kcounts = count_keyword_hits_in_messages(texts, chat, cfg.defaults)
-
-                    if cfg.run.seed_on_first_scan and not seeded:
-                        for m in messages:
-                            mr = match_message(ck, m.text, cfg.defaults, chat)
-                            store.add_fingerprint(ck, mr.fingerprint)
-                        store.mark_seeded(ck)
-                        log.info("Seeded chat %r — no alerts on first scan.", chat.title)
-                        summaries.append(ChatScanSummary(chat.title, len(messages), 0, kcounts, ""))
-                        continue
-
-                    chat_new_job_hits = 0
-                    for m in messages:
-                        mr = match_message(ck, m.text, cfg.defaults, chat)
-                        if store.has_fingerprint(ck, mr.fingerprint):
-                            continue
-                        store.add_fingerprint(ck, mr.fingerprint)
-                        if mr.matched:
-                            link = first_http_url(m.text) or ""
-                            preview = m.text.strip()
-                            if len(preview) > 1200:
-                                preview = preview[:1200] + "…"
-                            hits.append(Hit(chat_title=chat.title, preview=preview, link=link))
-                            chat_new_job_hits += 1
-                            log.info("Hit in %s", chat.title)
-
-                    summaries.append(
-                        ChatScanSummary(
-                            chat.title,
-                            len(messages),
-                            chat_new_job_hits,
-                            kcounts,
-                            "",
-                        )
-                    )
             except Exception:
                 if shot_dir:
                     save_error_screenshot(page_ref[0], shot_dir, prefix="scan-error")
