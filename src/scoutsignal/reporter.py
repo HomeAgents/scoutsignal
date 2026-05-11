@@ -91,7 +91,7 @@ def format_scan_report(
     job_hits: List[tuple[str, str, str]],
 ) -> str:
     """
-    Full email body: default keywords, per-chat scraped counts + per-keyword substring hits,
+    Full email body: default keywords once, then per chat only title + Result line,
     then job-match previews (if any).
     """
     lines: list[str] = []
@@ -100,32 +100,26 @@ def format_scan_report(
     lines.append("Default include keywords (config.yaml `defaults.include_keywords`):")
     if default_include_keywords:
         for kw in default_include_keywords:
-            lines.append(f"  - {kw}")
+            lines.append(f" - {kw}")
     else:
-        lines.append("  (empty — any message passing filters counts as a job match)")
+        lines.append(" - (empty — any message passing filters counts as a job match)")
     lines.append("")
     lines.append("Per chat")
     lines.append("--------")
     for ch in chat_rows:
         lines.append(f"Chat: {ch.chat_title}")
-        if ch.keyword_hits:
-            lines.append("  Keywords (substring hits among qualifying scraped lines):")
-            for kw, c in sorted(ch.keyword_hits.items(), key=lambda x: (-x[1], x[0])):
-                lines.append(f"    - {kw}: {c}")
-        else:
-            lines.append("  Keywords: (no include keywords for this chat)")
-
         if ch.error:
             lines.append(
-                f"  Result: {ch.scraped_messages} messages scraped · "
+                f"Result: {ch.scraped_messages} messages scraped · "
                 f"{ch.new_job_matches} new job match(es) · {ch.error}"
             )
         else:
             lines.append(
-                f"  Result: {ch.scraped_messages} messages scraped · "
+                f"Result: {ch.scraped_messages} messages scraped · "
                 f"{ch.new_job_matches} new job match(es) · OK"
             )
-        lines.append("")
+        lines.append("--------")
+    lines.append("")
     if job_hits:
         lines.append("New job matches (detail)")
         lines.append("-------------------------")
