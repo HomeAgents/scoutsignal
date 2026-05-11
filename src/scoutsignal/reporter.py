@@ -8,7 +8,29 @@ from email.mime.text import MIMEText
 from typing import Iterable, List
 
 
-from scoutsignal.config_loader import EmailConfig
+from email.utils import formataddr, parseaddr
+
+from scoutsignal.config_loader import EmailConfig, smtp_mailbox_for_from_addr
+
+
+def _from_header_and_mailbox(cfg: EmailConfig) -> tuple[str, str]:
+    """
+    Build RFC 5322 From header (display name + mailbox) and the SMTP login mailbox.
+    Replies go to the mailbox address.
+    """
+    raw = (cfg.from_addr or "").strip()
+    parsed_name, _parsed_addr = parseaddr(raw)
+    mailbox = smtp_mailbox_for_from_addr(raw)
+    if not mailbox:
+        raise RuntimeError("email.from_addr must include a mailbox address (e.g. you@gmail.com).")
+
+    display = (parsed_name or "").strip()
+    if not display and (cfg.from_display_name or "").strip():
+        display = cfg.from_display_name.strip()
+
+    if display:
+        return formataddr((display, mailbox)), mailbox
+    return mailbox, mailbox
 
 
 @dataclass
@@ -33,17 +55,20 @@ def send_digest_email(
     if not password:
         raise RuntimeError(f"Missing env {cfg.password_env} for SMTP password")
 
+    from_header, mailbox = _from_header_and_mailbox(cfg)
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"{cfg.subject_prefix}{subject}"
-    msg["From"] = cfg.from_addr
+    msg["From"] = from_header
+    msg["Reply-To"] = mailbox
     msg["To"] = ", ".join(cfg.to_addrs)
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
     with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=60) as server:
         if cfg.use_tls:
             server.starttls()
-        server.login(cfg.from_addr, password)
-        server.sendmail(cfg.from_addr, cfg.to_addrs, msg.as_string())
+        server.login(mailbox, password)
+        server.sendmail(mailbox, cfg.to_addrs, msg.as_string())
 
 
 def format_hit_lines(

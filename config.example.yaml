@@ -40,6 +40,8 @@ email:
   smtp_port: 587
   use_tls: true
   from_addr: "you@gmail.com"
+  # Shown before <you@gmail.com> in the From line; Reply uses that mailbox. Use "" to omit.
+  from_display_name: "(ScoutSignal)"
   to_addrs:
     - "you@gmail.com"
   subject_prefix: "[ScoutSignal] "
