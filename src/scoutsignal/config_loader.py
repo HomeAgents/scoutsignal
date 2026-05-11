@@ -16,6 +16,8 @@ class BrowserConfig:
     channel: Optional[str] = None
     # BCP-47 locale (e.g. he-IL for Hebrew WhatsApp UI, en-US default).
     locale: str = "en-US"
+    # Extra Chromium CLI flags (e.g. --no-first-run) for quieter unattended launches.
+    extra_chromium_args: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -24,6 +26,8 @@ class RunConfig:
     max_messages_per_chat: int = 120
     seed_on_first_scan: bool = True
     whatsapp_url: str = "https://web.whatsapp.com"
+    # Max wall-clock time to open one chat from search (avoids hanging on modals / empty results).
+    open_chat_timeout_seconds: int = 300
 
 
 @dataclass
@@ -40,10 +44,15 @@ class EmailConfig:
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     use_tls: bool = True
+    # Mailbox used for SMTP auth. May be `addr@domain` or `Display Name <addr@domain>`.
     from_addr: str = ""
+    # Shown in clients as "From: … <addr>"; replies go to the mailbox in from_addr. Empty = no display name.
+    from_display_name: str = "(ScoutSignal)"
     to_addrs: list[str] = field(default_factory=list)
     subject_prefix: str = "[ScoutSignal] "
     password_env: str = "SCOUTSIGNAL_SMTP_PASSWORD"
+    # If true, send an email after every successful scan (even 0 job hits), with keyword scan stats.
+    always_send_summary: bool = False
 
 
 @dataclass
@@ -100,6 +109,27 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _load_from_display_name(email: dict) -> str:
+    if "from_display_name" not in email:
+        return "(ScoutSignal)"
+    v = email["from_display_name"]
+    if v is None:
+        return "(ScoutSignal)"
+    return str(v).strip()
+
+
+def smtp_mailbox_for_from_addr(from_addr: str) -> str:
+    """Mailbox for SMTP login / envelope, from bare email or `Name <email>`."""
+    from email.utils import parseaddr
+
+    _, addr = parseaddr((from_addr or "").strip())
+    addr = addr.strip()
+    if addr and "@" in addr:
+        return addr
+    raw = (from_addr or "").strip()
+    return raw if "@" in raw else ""
+
+
 def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
     # Optional secrets next to config (e.g. SCOUTSIGNAL_SMTP_PASSWORD); does not override existing env.
     load_dotenv(config_path.parent / ".env")
@@ -137,6 +167,10 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
 
     ud = browser.get("user_data_dir") or "~/.scoutsignal/browser-profile"
     sp = state.get("sqlite_path") or "~/.scoutsignal/state.db"
+    extra_raw = browser.get("extra_chromium_args") or browser.get("chromium_args") or []
+    if not isinstance(extra_raw, list):
+        extra_raw = []
+    extra_chromium_args = [str(x) for x in extra_raw if str(x).strip()]
 
     return AppConfig(
         browser=BrowserConfig(
@@ -144,12 +178,17 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             headless=bool(browser.get("headless", False)),
             channel=browser.get("channel"),
             locale=str(browser.get("locale") or "en-US"),
+            extra_chromium_args=extra_chromium_args,
         ),
         run=RunConfig(
             poll_interval_seconds=int(run.get("poll_interval_seconds", 300)),
             max_messages_per_chat=int(run.get("max_messages_per_chat", 120)),
             seed_on_first_scan=bool(run.get("seed_on_first_scan", True)),
             whatsapp_url=str(run.get("whatsapp_url", "https://web.whatsapp.com")),
+            open_chat_timeout_seconds=max(
+                15,
+                min(3600, int(run.get("open_chat_timeout_seconds", 300))),
+            ),
         ),
         defaults=DefaultsConfig(
             include_keywords=list(defaults.get("include_keywords") or []),
@@ -163,9 +202,11 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             smtp_port=int(email.get("smtp_port", 587)),
             use_tls=bool(email.get("use_tls", True)),
             from_addr=str(email.get("from_addr", "")),
+            from_display_name=_load_from_display_name(email),
             to_addrs=list(email.get("to_addrs") or []),
             subject_prefix=str(email.get("subject_prefix", "[ScoutSignal] ")),
             password_env=str(email.get("password_env", "SCOUTSIGNAL_SMTP_PASSWORD")),
+            always_send_summary=bool(email.get("always_send_summary", False)),
         ),
         state=StateConfig(sqlite_path=_expand(str(sp))),
         logging=LoggingConfig(level=str(logging_cfg.get("level", "INFO"))),
@@ -203,6 +244,12 @@ def validate_config(
     if cfg.email.enabled:
         if not cfg.email.from_addr:
             errors.append("email.from_addr is required when email.enabled is true.")
+        mbox = smtp_mailbox_for_from_addr(cfg.email.from_addr)
+        if not mbox or "@" not in mbox:
+            errors.append(
+                "email.from_addr must contain a mailbox address "
+                "(e.g. you@gmail.com or ScoutSignal <you@gmail.com>)."
+            )
         if not cfg.email.to_addrs:
             errors.append("email.to_addrs must be non-empty when email.enabled is true.")
         import os

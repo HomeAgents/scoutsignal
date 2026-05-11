@@ -9,7 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from playwright.sync_api import BrowserContext, Locator, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    BrowserContext,
+    Locator,
+    Page,
+    Playwright,
+    TimeoutError as PWTimeoutError,
+    sync_playwright,
+)
 
 from scoutsignal.config_loader import BrowserConfig
 
@@ -31,6 +38,8 @@ def _launch_context(p: Playwright, cfg: BrowserConfig) -> BrowserContext:
     }
     if cfg.channel:
         kwargs["channel"] = cfg.channel
+    if cfg.extra_chromium_args:
+        kwargs["args"] = list(cfg.extra_chromium_args)
     return p.chromium.launch_persistent_context(**kwargs)
 
 
@@ -72,6 +81,31 @@ def _visible_search_editable(page: Page, timeout_ms: int = 500) -> Optional[Loca
         except Exception:
             continue
     return None
+
+
+def _click_obvious_dialog_buttons(page: Page) -> None:
+    """Dismiss cookie / update / consent sheets that block sidebar clicks."""
+    patterns = (
+        r"^\s*OK\s*$",
+        r"Continue",
+        r"Got it",
+        r"Accept(\s+all)?",
+        r"I agree",
+        r"Allow",
+        r"מסכים",
+        r"אישור",
+        r"הבנתי",
+        r"סגור",
+        r"Close",
+    )
+    for pat in patterns:
+        try:
+            btn = page.get_by_role("button", name=re.compile(pat, re.I))
+            if btn.count() and btn.first.is_visible(timeout=200):
+                btn.first.click(timeout=2_000)
+                time.sleep(0.2)
+        except Exception:
+            continue
 
 
 def _open_sidebar_search(page: Page) -> None:
@@ -139,19 +173,60 @@ def _open_sidebar_search(page: Page) -> None:
             continue
 
 
-def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
+def open_chat_by_title(
+    page: Page,
+    title: str,
+    *,
+    open_deadline: Optional[float] = None,
+    settle_ms: int = 800,
+) -> bool:
     """
     Use the sidebar search to open a chat. `title` should be a unique substring
     of the chat name as shown in WhatsApp.
+
+    If `open_deadline` is set (monotonic seconds), abort and return False when time runs out
+    so a stuck search / modal cannot block the scan indefinitely.
     """
+
+    def remaining_ms(fallback_cap: int = 90_000) -> int:
+        if open_deadline is None:
+            return fallback_cap
+        return max(0, int((open_deadline - time.monotonic()) * 1000))
+
+    def bail(reason: str) -> bool:
+        log.warning("open_chat_by_title: %s (chat %r)", reason, title)
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("deadline already expired at start")
+
     _open_sidebar_search(page)
-    editable = _visible_search_editable(page, timeout_ms=1_500)
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out while opening sidebar search")
+
+    editable = _visible_search_editable(
+        page,
+        timeout_ms=min(1_500, max(200, remaining_ms(1_500))),
+    )
     if editable is None:
         log.error("Could not find WhatsApp search input — UI may have changed.")
         return False
 
-    editable.click()
+    _click_obvious_dialog_buttons(page)
+    try:
+        editable.click(timeout=min(5_000, max(250, remaining_ms(5_000))))
+    except PWTimeoutError:
+        log.warning("Search field click timed out for chat %r", title)
+        return False
     time.sleep(0.05)
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out before typing search query")
+
     if sys.platform == "darwin":
         page.keyboard.press("Meta+a")
     else:
@@ -159,20 +234,80 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
     page.keyboard.press("Backspace")
     # insert_text handles Hebrew, emoji, and mixed scripts reliably vs key-by-key type().
     page.keyboard.insert_text(title)
-    time.sleep(0.4)
 
-    # First search result cell
-    cell = page.locator('[data-testid="cell-frame-container"]').first
-    if cell.count() == 0:
-        cell = page.locator('[role="listitem"]').filter(has_text=re.compile(re.escape(title[: min(20, len(title))]), re.I)).first
+    # Prefer a result row that actually contains the chat title (`.first` alone often hits the wrong row).
+    wait_results_ms = min(12_000, max(400, remaining_ms(12_000)))
+    st = title.strip()
+    snippet = st[: min(48, len(st))] if st else ""
+    cell: Optional[Locator] = None
+    if snippet:
+        match_cells = page.locator('[data-testid="cell-frame-container"]').filter(
+            has_text=re.compile(re.escape(snippet), re.I)
+        )
+        try:
+            match_cells.first.wait_for(state="visible", timeout=wait_results_ms)
+        except Exception:
+            pass
+        if match_cells.count() > 0:
+            cell = match_cells.first
+
+    if cell is None:
+        all_cells = page.locator('[data-testid="cell-frame-container"]')
+        if all_cells.count() > 0:
+            try:
+                all_cells.first.wait_for(state="visible", timeout=min(6_000, wait_results_ms))
+            except Exception:
+                pass
+            cell = all_cells.first
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out waiting for search results after typing title")
+
+    if cell is None or cell.count() == 0:
+        cell = page.locator('[role="listitem"]').filter(
+            has_text=re.compile(re.escape(title[: min(20, len(title))]), re.I)
+        ).first
 
     if cell.count() == 0:
         log.warning("No search result for chat title substring: %s", title)
         page.keyboard.press("Escape")
         return False
 
-    cell.click()
-    time.sleep(settle_ms / 1000)
+    _click_obvious_dialog_buttons(page)
+    # Cookie / update / “OK” overlays often block the first search-result click.
+    for _ in range(4):
+        if open_deadline is not None and time.monotonic() >= open_deadline:
+            return bail("timed out while dismissing modal overlays")
+        dlg = page.locator('[role="dialog"][aria-modal="true"]')
+        if dlg.count() == 0:
+            break
+        page.keyboard.press("Escape")
+        time.sleep(0.2)
+    time.sleep(0.15)
+
+    click_budget = min(20_000, max(300, remaining_ms(20_000)))
+    if open_deadline is not None and click_budget < 400:
+        return bail("insufficient time left to click search result")
+
+    try:
+        cell.click(timeout=click_budget)
+    except Exception as exc:
+        log.warning("Could not click search result for %r (%s) — retry after dismiss", title, exc)
+        _click_obvious_dialog_buttons(page)
+        for _ in range(3):
+            page.keyboard.press("Escape")
+            time.sleep(0.15)
+        retry_budget = min(10_000, max(1_000, remaining_ms(10_000)))
+        try:
+            cell.click(timeout=retry_budget, force=True)
+        except Exception as exc2:
+            log.warning("Retry click failed for %r: %s", title, exc2)
+            page.keyboard.press("Escape")
+            return False
+
+    settle_s = min(settle_ms / 1000.0, max(0.0, remaining_ms(60_000) / 1000.0))
+    if settle_s > 0:
+        time.sleep(settle_s)
     page.keyboard.press("Escape")
     return True
 

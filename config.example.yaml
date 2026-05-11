@@ -8,6 +8,10 @@ browser:
   channel: null
   # BCP-47 UI locale. Use he-IL if WhatsApp Web is in Hebrew (buttons / search labels).
   locale: "en-US"
+  # Extra Chromium flags — useful for launchd / headless (fewer first-run popups).
+  extra_chromium_args:
+    - "--no-first-run"
+    - "--no-default-browser-check"
 
 run:
   poll_interval_seconds: 300
@@ -15,6 +19,8 @@ run:
   # First time a chat is opened: only record messages (no emails) to avoid a burst of old posts.
   seed_on_first_scan: true
   whatsapp_url: "https://web.whatsapp.com"
+  # Max seconds to open one chat via search (modal / no results / stuck click). Default 5 minutes.
+  open_chat_timeout_seconds: 300
 
 defaults:
   include_keywords:
@@ -34,10 +40,14 @@ email:
   smtp_port: 587
   use_tls: true
   from_addr: "you@gmail.com"
+  # Shown before <you@gmail.com> in the From line; Reply uses that mailbox. Use "" to omit.
+  from_display_name: "(ScoutSignal)"
   to_addrs:
     - "you@gmail.com"
   subject_prefix: "[ScoutSignal] "
   password_env: SCOUTSIGNAL_SMTP_PASSWORD
+  # If true, send an email after every scan (even 0 job hits) with keyword stats per chat.
+  always_send_summary: false
 
 state:
   sqlite_path: "~/.scoutsignal/state.db"
