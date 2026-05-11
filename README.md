@@ -1,54 +1,111 @@
 # ScoutSignal
 
-**ScoutSignal** opens **WhatsApp Web** in a **persistent** browser profile, reads messages from chats you list, applies keyword / URL filters, **dedupes** with SQLite, and can **email** you matches.
+**ScoutSignal** is a local Python CLI that drives **WhatsApp Web** with **Playwright** (persistent Chromium profile), opens only the **chats you list**, scrapes recent messages, applies **keyword / URL** filters, **dedupes** with **SQLite**, and can send **SMTP email** digests when something matches.
 
-## What I need from you (human steps)
+> **Repo layout:** this tree is intended for **GitHub** (e.g. `~/GitHub/scoutsignal`). **Secrets and WhatsApp state** belong in a **separate config directory** (e.g. `~/scoutsignal-config`) — never commit `.env`, `config.yaml` with real SMTP, or `.scoutsignal/` browser profiles.
 
-ScoutSignal cannot log in to your WhatsApp account by itself the first time. Please provide / do the following:
+---
 
-1. **Paths** — Run `scoutsignal init ~/scoutsignal-config` (or your folder). That creates `config.yaml`, `chats.yaml`, `.scoutsignal/browser-profile`, and `state.db` paths.
-2. **WhatsApp** — First `scoutsignal run`: scan the **QR code** in the opened browser. The same `user_data_dir` keeps you logged in later.
-3. **Chat titles** — In WhatsApp Web, open a group/DM, then run:
-   ```bash
-   scoutsignal probe --config config.yaml --chats chats.yaml
-   ```
-   Copy the printed line into `chats.yaml` as `title:` (unique substring is enough).
-4. **SMTP** — Gmail: use an **app password**, not your normal password. Set:
-   ```bash
-   export SCOUTSIGNAL_SMTP_PASSWORD='....'
-   ```
-   and set `email.from_addr` / `email.to_addrs` in `config.yaml`.
-5. **Keywords** — Edit `defaults.include_keywords` / `exclude_keywords` (and per-chat overrides in `chats.yaml`) so matches look like real job posts for you.
+## Design & architecture
 
-**Optional:** In the same folder as `config.yaml`, create a file named `.env` (never commit it) with your app password, for example:
+### Goals
 
-```bash
-SCOUTSIGNAL_SMTP_PASSWORD=your-gmail-app-password
+- **Privacy by scope:** only configured `chats.yaml` entries are opened; the tool does not walk your entire chat list.
+- **Operational safety:** first scan can **seed** fingerprints without emailing (no “old history” blast).
+- **Resilience:** WhatsApp’s DOM changes often — search and scrape logic use **multiple selectors** and **error screenshots** for debugging.
+- **Internationalization:** **UTF-8** chat titles and keywords; **Unicode NFC** for matching; optional **`browser.locale`** (e.g. `he-IL`) for Hebrew UI; **`keyboard.insert_text`** for non‑Latin search queries.
+
+### High-level flow
+
+```mermaid
+flowchart LR
+  subgraph config [Config]
+    CY[config.yaml]
+    CH[chats.yaml]
+    ENV[.env optional]
+  end
+  subgraph core [Core]
+    CLI[cli.py]
+    LOAD[config_loader]
+    ENG[engine.py]
+    WA[whatsapp.py]
+    MAT[matcher.py]
+    ST[state.py]
+    REP[reporter.py]
+  end
+  subgraph external [External]
+    WAW[web.whatsapp.com]
+    SMTP[SMTP e.g. Gmail]
+  end
+  CY --> LOAD
+  CH --> LOAD
+  ENV --> LOAD
+  CLI --> ENG
+  LOAD --> ENG
+  ENG --> WA
+  WA --> WAW
+  ENG --> MAT
+  ENG --> ST
+  ENG --> REP
+  REP --> SMTP
 ```
 
-ScoutSignal loads that file automatically when it reads `config.yaml`. Gmail SMTP is `smtp.gmail.com`, port `587`, TLS on — same pattern as other apps that use `GMAIL_APP_PASSWORD` with a Google **app password** (not your normal account password).
+### Components
 
-Everything else below is automated once the above is done.
+| Module | Role |
+|--------|------|
+| **`cli.py`** | Subcommands: `init`, `config-check`, `run`, `probe`; loads optional **`.env`** next to `config.yaml`. |
+| **`config_loader.py`** | Merges `config.yaml` + `chats.yaml` into typed dataclasses; **`validate_config`**; **`screenshots_dir_for`**; **`browser.locale`**. |
+| **`whatsapp.py`** | Persistent Chromium context; **wait for main UI**; **open chat by title** (search shortcuts + aria-labels + Hebrew buttons); **scrape** message containers; **probe** header title; **error screenshots**. |
+| **`matcher.py`** | **NFC-normalized** substring match for `include_keywords` / `exclude_keywords`; optional **`require_url`**; **SHA-256** fingerprint per message. |
+| **`state.py`** | SQLite: seen fingerprints + per-chat **seeded** flag. |
+| **`engine.py`** | Orchestrates scan loop, seeding, hits, email digest; wraps failures with screenshots. |
+| **`reporter.py`** | Plain-text MIME email over **TLS SMTP**. |
 
-## Hebrew and UTF-8
+### Data model (conceptual)
 
-- **`chats.yaml`** supports **Hebrew and emoji** in `title:` (use double quotes if the name contains `:`).
-- **Keywords** can be Hebrew, English, or both under `defaults` or per-chat `include_keywords` / `exclude_keywords`. Matching uses **Unicode NFC** normalization so composed Hebrew letters match reliably.
-- If WhatsApp Web’s UI is in **Hebrew**, set in **`config.yaml`** under **`browser`:** `locale: "he-IL"` so Chromium matches Hebrew search and menu labels.
+- **Chat identity:** `title` substring → open via search → scrape `#main` / `[data-testid="msg-container"]`.
+- **Dedupe key:** `sha256(chat_key + "\n" + raw_message_text)` stored in SQLite so the same post is not re-alerted.
+- **Match rule:** message must pass **min length**, optional **URL requirement**, **no exclude keyword** hit, and **at least one include keyword** (unless `include_keywords` is empty = match all that pass filters).
+
+---
+
+## What we built (project history)
+
+- **Packaging:** `pyproject.toml`, setuptools `src/` layout, CLI entry **`scoutsignal`**.
+- **Bootstrap:** `scoutsignal init <dir>` copies templates and writes **`browser.user_data_dir`** + **`state.sqlite_path`** under `<dir>/.scoutsignal/`.
+- **Operations:** `config-check`, `run` with **`--dry-run`**, **`--loop`**, **`--skip-email-check`**; **`probe`** prints the open chat title for accurate `chats.yaml` titles.
+- **Diagnostics:** optional **`diagnostics.error_screenshots`** and directory next to `state.db`; **`extras/`** macOS **`launchd`** example plist + notes.
+- **SMTP ergonomics:** **`python-dotenv`** loads **`.env`** beside `config.yaml` for **`SCOUTSIGNAL_SMTP_PASSWORD`** (never commit).
+- **WhatsApp hardening:** broader **search box** detection (`aria-label="Search name or number"`, pane-side textboxes, Hebrew / English **button** fallbacks); **`insert_text`** for Hebrew/emoji titles; optional **`browser.locale`**.
+- **Hebrew / UTF-8:** **NFC** normalization in **`matcher`** and **`engine`** chat keys; duplicate-title validation uses NFC; README + `config.example.yaml` document **`he-IL`**.
+- **Python 3.9+** compatibility maintained in typings where relevant.
+
+---
+
+## What you need to run it
+
+1. **Install:** `pip install -e .` and **`playwright install chromium`**.
+2. **Config dir:** `scoutsignal init ~/scoutsignal-config` then edit **`config.yaml`** + **`chats.yaml`** (only chats you want).
+3. **WhatsApp:** first **`scoutsignal run`** → scan **QR** once; profile reuse keeps login.
+4. **SMTP (Gmail):** **`email.from_addr` / `to_addrs`** + Google **App Password** in **`.env`** or env var (not your normal Gmail password).
+5. **Keywords:** tune **`defaults.include_keywords`** / **`exclude_keywords`**, or per-chat overrides.
+
+### Hebrew and UTF-8
+
+- Quote **`title:`** in YAML when names contain **`:`** or mixed punctuation.
+- Set **`browser.locale: "he-IL"`** if WhatsApp Web UI is Hebrew.
+- Keywords may be Hebrew, English, or both; matching is **case-insensitive** + **NFC**.
+
+---
 
 ## Important
 
-- Driving **WhatsApp Web** with **Playwright** may conflict with **WhatsApp / Meta** terms of use. Use at your own risk.
-- The UI changes; if search or messages break, update selectors in `src/scoutsignal/whatsapp.py`.
-- **Privacy:** error **screenshots** may contain chat content; they go under `screenshots/` next to your `state.db` unless you override `diagnostics.screenshots_dir`.
+- Automating **WhatsApp Web** may conflict with **Meta’s terms**; use at your own risk.
+- **Do not** commit **`.env`**, real **`config.yaml`**, or **`.scoutsignal/`** to public repos.
+- Error **screenshots** may contain private chat pixels; disable with **`diagnostics.error_screenshots: false`** if undesired.
 
-## Where state lives
-
-| Item | Typical location (after `init`) |
-|------|----------------------------------|
-| Browser session (stay logged in) | `<config-dir>/.scoutsignal/browser-profile` |
-| SQLite dedupe / seed flags | `<config-dir>/.scoutsignal/state.db` |
-| Error screenshots | `<config-dir>/.scoutsignal/screenshots/` |
+---
 
 ## Setup
 
@@ -65,7 +122,7 @@ playwright install chromium
 ```bash
 scoutsignal init ~/scoutsignal-config
 cd ~/scoutsignal-config
-# edit config.yaml + chats.yaml; export SCOUTSIGNAL_SMTP_PASSWORD
+# edit config.yaml + chats.yaml; add .env with SCOUTSIGNAL_SMTP_PASSWORD if using email
 
 scoutsignal config-check --config config.yaml --chats chats.yaml
 scoutsignal probe --config config.yaml --chats chats.yaml
@@ -74,17 +131,29 @@ scoutsignal run --config config.yaml --chats chats.yaml
 scoutsignal run --config config.yaml --chats chats.yaml --loop
 ```
 
-- **`seed_on_first_scan`** (in `config.yaml`): first time each chat is scanned, fingerprints are stored **without** email, to avoid a burst of old posts.
+- **`seed_on_first_scan`:** first pass per chat records fingerprints **without** email to avoid flooding old messages.
 
-## Background on macOS
+## Publishing to GitHub
 
-See **`extras/com.scoutsignal.example.plist`** and **`extras/README.md`** for a `launchd` template. You must edit paths and SMTP env; do an **interactive** login first with `scoutsignal run` using the same `user_data_dir`.
+From this folder (after creating an empty repo on GitHub):
+
+```bash
+cd ~/GitHub/scoutsignal
+git remote add origin https://github.com/<you>/<repo>.git
+git push -u origin main
+```
+
+Use a **`.gitignore`** that excludes local config copies if you ever keep them inside the clone (this repo already ignores **`.env`**, **`.venv/`**, **`.scoutsignal/`**, **`*.db`**).
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | Browser profile, intervals, keywords, SMTP, diagnostics |
+| `config.yaml` | Browser profile, `locale`, intervals, keywords, SMTP, diagnostics |
 | `chats.yaml` | Which chats to watch; optional per-chat keyword overrides |
 
-Templates: `config.example.yaml`, `chats.example.yaml`.
+Templates: **`config.example.yaml`**, **`chats.example.yaml`**.
+
+## License
+
+Add a `LICENSE` file of your choice when you publish (not included by default).
