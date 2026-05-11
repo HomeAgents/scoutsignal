@@ -46,6 +46,8 @@ class EmailConfig:
     to_addrs: list[str] = field(default_factory=list)
     subject_prefix: str = "[ScoutSignal] "
     password_env: str = "SCOUTSIGNAL_SMTP_PASSWORD"
+    # If true, send an email after every successful scan (even 0 job hits), with keyword scan stats.
+    always_send_summary: bool = False
 
 
 @dataclass
@@ -173,6 +175,7 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             to_addrs=list(email.get("to_addrs") or []),
             subject_prefix=str(email.get("subject_prefix", "[ScoutSignal] ")),
             password_env=str(email.get("password_env", "SCOUTSIGNAL_SMTP_PASSWORD")),
+            always_send_summary=bool(email.get("always_send_summary", False)),
         ),
         state=StateConfig(sqlite_path=_expand(str(sp))),
         logging=LoggingConfig(level=str(logging_cfg.get("level", "INFO"))),

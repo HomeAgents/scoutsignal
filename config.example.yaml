@@ -42,6 +42,8 @@ email:
     - "you@gmail.com"
   subject_prefix: "[ScoutSignal] "
   password_env: SCOUTSIGNAL_SMTP_PASSWORD
+  # If true, send an email after every scan (even 0 job hits) with keyword stats per chat.
+  always_send_summary: false
 
 state:
   sqlite_path: "~/.scoutsignal/state.db"

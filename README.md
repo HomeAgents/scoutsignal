@@ -18,6 +18,7 @@ ScoutSignal cannot log in to your WhatsApp account by itself the first time. Ple
    export SCOUTSIGNAL_SMTP_PASSWORD='....'
    ```
    and set `email.from_addr` / `email.to_addrs` in `config.yaml`.
+   - Optional: **`email.always_send_summary: true`** — send an email after **every** scan (even **0** job hits) with **default keywords** listed and **per-chat** scraped counts plus **per-keyword substring hit counts** (then job-match details if any).
 5. **Keywords** — Edit `defaults.include_keywords` / `exclude_keywords` (and per-chat overrides in `chats.yaml`) so matches look like real job posts for you.
 
 **Optional:** In the same folder as `config.yaml`, create a file named `.env` (never commit it) with your app password, for example:

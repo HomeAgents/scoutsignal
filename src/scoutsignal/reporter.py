@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import os
 import smtplib
+from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Iterable
+from typing import Iterable, List
+
 
 from scoutsignal.config_loader import EmailConfig
+
+
+@dataclass
+class ChatScanSummary:
+    """One row for the post-scan email report."""
+
+    chat_title: str
+    scraped_messages: int
+    new_job_matches: int
+    keyword_hits: dict[str, int]
+    error: str = ""
 
 
 def send_digest_email(
@@ -44,4 +57,55 @@ def format_hit_lines(
         if link:
             lines.append(f"Link: {link}")
         lines.append("---")
+    return "\n".join(lines).strip()
+
+
+def format_scan_report(
+    default_include_keywords: List[str],
+    chat_rows: List[ChatScanSummary],
+    job_hits: List[tuple[str, str, str]],
+) -> str:
+    """
+    Full email body: default keywords, per-chat scraped counts + per-keyword substring hits,
+    then job-match previews (if any).
+    """
+    lines: list[str] = []
+    lines.append("ScoutSignal — scan summary")
+    lines.append("")
+    lines.append("Default include keywords (config.yaml `defaults.include_keywords`):")
+    if default_include_keywords:
+        for kw in default_include_keywords:
+            lines.append(f"  - {kw}")
+    else:
+        lines.append("  (empty — any message passing filters counts as a job match)")
+    lines.append("")
+    lines.append("Per chat")
+    lines.append("--------")
+    for ch in chat_rows:
+        lines.append(f"Chat: {ch.chat_title}")
+        if ch.error:
+            lines.append(f"  Status: {ch.error}")
+            lines.append(f"  Scraped messages: {ch.scraped_messages}")
+            lines.append("  New job matches (full rules): 0")
+            if ch.keyword_hits:
+                lines.append("  Keyword substring hits (among qualifying scraped lines):")
+                for kw, c in ch.keyword_hits.items():
+                    lines.append(f"    - {kw}: {c}")
+            lines.append("")
+            continue
+        lines.append(f"  Scraped messages: {ch.scraped_messages}")
+        lines.append(f"  New job matches (full rules): {ch.new_job_matches}")
+        if ch.keyword_hits:
+            lines.append("  Keyword substring hits (among qualifying scraped lines):")
+            for kw, c in sorted(ch.keyword_hits.items(), key=lambda x: (-x[1], x[0])):
+                lines.append(f"    - {kw}: {c}")
+        else:
+            lines.append("  Keyword substring hits: (no include keywords for this chat)")
+        lines.append("")
+    if job_hits:
+        lines.append("New job matches (detail)")
+        lines.append("-------------------------")
+        lines.append(format_hit_lines(job_hits))
+    else:
+        lines.append("New job matches (detail): none this run.")
     return "\n".join(lines).strip()
