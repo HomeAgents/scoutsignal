@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from scoutsignal.config_loader import AppConfig, screenshots_dir_for
@@ -21,7 +22,8 @@ log = logging.getLogger(__name__)
 
 
 def _chat_key(title: str) -> str:
-    s = re.sub(r"\s+", " ", title.strip().lower())
+    t = unicodedata.normalize("NFC", title.strip())
+    s = re.sub(r"\s+", " ", t.lower())
     s = re.sub(r"[^\w\- ]+", "", s)
     return s[:120] if s else "unknown"
 

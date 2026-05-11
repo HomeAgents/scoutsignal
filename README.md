@@ -30,6 +30,12 @@ ScoutSignal loads that file automatically when it reads `config.yaml`. Gmail SMT
 
 Everything else below is automated once the above is done.
 
+## Hebrew and UTF-8
+
+- **`chats.yaml`** supports **Hebrew and emoji** in `title:` (use double quotes if the name contains `:`).
+- **Keywords** can be Hebrew, English, or both under `defaults` or per-chat `include_keywords` / `exclude_keywords`. Matching uses **Unicode NFC** normalization so composed Hebrew letters match reliably.
+- If WhatsApp Web’s UI is in **Hebrew**, set in **`config.yaml`** under **`browser`:** `locale: "he-IL"` so Chromium matches Hebrew search and menu labels.
+
 ## Important
 
 - Driving **WhatsApp Web** with **Playwright** may conflict with **WhatsApp / Meta** terms of use. Use at your own risk.

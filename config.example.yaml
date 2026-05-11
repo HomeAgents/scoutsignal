@@ -6,6 +6,8 @@ browser:
   headless: false
   # Optional: "chrome" to use Google Chrome instead of bundled Chromium
   channel: null
+  # BCP-47 UI locale. Use he-IL if WhatsApp Web is in Hebrew (buttons / search labels).
+  locale: "en-US"
 
 run:
   poll_interval_seconds: 300

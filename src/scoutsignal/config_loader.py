@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
@@ -13,6 +14,8 @@ class BrowserConfig:
     user_data_dir: Path
     headless: bool = False
     channel: Optional[str] = None
+    # BCP-47 locale (e.g. he-IL for Hebrew WhatsApp UI, en-US default).
+    locale: str = "en-US"
 
 
 @dataclass
@@ -140,6 +143,7 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             user_data_dir=_expand(str(ud)),
             headless=bool(browser.get("headless", False)),
             channel=browser.get("channel"),
+            locale=str(browser.get("locale") or "en-US"),
         ),
         run=RunConfig(
             poll_interval_seconds=int(run.get("poll_interval_seconds", 300)),
@@ -213,7 +217,7 @@ def validate_config(
         if not enabled:
             errors.append("No enabled chats in chats.yaml.")
 
-        titles = [c.title.lower() for c in enabled]
+        titles = [unicodedata.normalize("NFC", c.title.strip().lower()) for c in enabled]
         if len(titles) != len(set(titles)):
             errors.append("Duplicate chat titles among enabled chats — use unique substrings.")
 

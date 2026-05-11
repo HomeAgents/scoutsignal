@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -21,7 +22,8 @@ class MatchResult:
 
 
 def _normalize(text: str) -> str:
-    return " ".join(text.split()).strip().lower()
+    s = " ".join((text or "").split()).strip().lower()
+    return unicodedata.normalize("NFC", s)
 
 
 def _fingerprint(chat_key: str, text: str) -> str:

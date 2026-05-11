@@ -27,7 +27,7 @@ def _launch_context(p: Playwright, cfg: BrowserConfig) -> BrowserContext:
         "user_data_dir": str(cfg.user_data_dir),
         "headless": cfg.headless,
         "viewport": {"width": 1280, "height": 900},
-        "locale": "en-US",
+        "locale": cfg.locale,
     }
     if cfg.channel:
         kwargs["channel"] = cfg.channel
@@ -98,12 +98,26 @@ def _open_sidebar_search(page: Page) -> None:
     for label in (
         "Search",
         "חיפוש",
+        "חיפוש או התחלת צ'אט חדש",
+        "התחלת צ'אט חדש",
         "Search or start new chat",
         "New chat",
         "צ'אט חדש",
     ):
         try:
             btn = page.get_by_role("button", name=re.compile(re.escape(label), re.I))
+            if btn.count() and btn.first.is_visible(timeout=400):
+                btn.first.click()
+                time.sleep(0.35)
+                if _visible_search_editable(page, timeout_ms=600) is not None:
+                    return
+        except Exception:
+            continue
+
+    # Short Hebrew / English substrings (accessibility name may be longer).
+    for pattern in (re.compile(r"חיפוש"), re.compile(r"Search", re.I)):
+        try:
+            btn = page.get_by_role("button", name=pattern)
             if btn.count() and btn.first.is_visible(timeout=400):
                 btn.first.click()
                 time.sleep(0.35)
@@ -143,7 +157,8 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
     else:
         page.keyboard.press("Control+a")
     page.keyboard.press("Backspace")
-    page.keyboard.type(title, delay=20)
+    # insert_text handles Hebrew, emoji, and mixed scripts reliably vs key-by-key type().
+    page.keyboard.insert_text(title)
     time.sleep(0.4)
 
     # First search result cell
