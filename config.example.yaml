@@ -19,6 +19,8 @@ run:
   # First time a chat is opened: only record messages (no emails) to avoid a burst of old posts.
   seed_on_first_scan: true
   whatsapp_url: "https://web.whatsapp.com"
+  # Max seconds to open one chat via search (modal / no results / stuck click). Default 5 minutes.
+  open_chat_timeout_seconds: 300
 
 defaults:
   include_keywords:

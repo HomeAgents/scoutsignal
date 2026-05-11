@@ -26,6 +26,8 @@ class RunConfig:
     max_messages_per_chat: int = 120
     seed_on_first_scan: bool = True
     whatsapp_url: str = "https://web.whatsapp.com"
+    # Max wall-clock time to open one chat from search (avoids hanging on modals / empty results).
+    open_chat_timeout_seconds: int = 300
 
 
 @dataclass
@@ -159,6 +161,10 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             max_messages_per_chat=int(run.get("max_messages_per_chat", 120)),
             seed_on_first_scan=bool(run.get("seed_on_first_scan", True)),
             whatsapp_url=str(run.get("whatsapp_url", "https://web.whatsapp.com")),
+            open_chat_timeout_seconds=max(
+                15,
+                min(3600, int(run.get("open_chat_timeout_seconds", 300))),
+            ),
         ),
         defaults=DefaultsConfig(
             include_keywords=list(defaults.get("include_keywords") or []),

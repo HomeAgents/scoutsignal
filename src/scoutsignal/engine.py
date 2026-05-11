@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Optional
@@ -121,7 +122,8 @@ def run_scan(cfg: AppConfig, *, dry_run: bool) -> list[Hit]:
                     seeded = store.is_seeded(ck)
                     zero_kw = {k: 0 for k in effective_include_keywords(cfg.defaults, chat)}
 
-                    if not open_chat_by_title(page, chat.title):
+                    open_deadline = time.monotonic() + float(cfg.run.open_chat_timeout_seconds)
+                    if not open_chat_by_title(page, chat.title, open_deadline=open_deadline):
                         log.warning("Skipping chat (could not open): %s", chat.title)
                         summaries.append(
                             ChatScanSummary(

@@ -141,19 +141,55 @@ def _open_sidebar_search(page: Page) -> None:
             continue
 
 
-def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
+def open_chat_by_title(
+    page: Page,
+    title: str,
+    *,
+    open_deadline: Optional[float] = None,
+    settle_ms: int = 800,
+) -> bool:
     """
     Use the sidebar search to open a chat. `title` should be a unique substring
     of the chat name as shown in WhatsApp.
+
+    If `open_deadline` is set (monotonic seconds), abort and return False when time runs out
+    so a stuck search / modal cannot block the scan indefinitely.
     """
+
+    def remaining_ms(fallback_cap: int = 90_000) -> int:
+        if open_deadline is None:
+            return fallback_cap
+        return max(0, int((open_deadline - time.monotonic()) * 1000))
+
+    def bail(reason: str) -> bool:
+        log.warning("open_chat_by_title: %s (chat %r)", reason, title)
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("deadline already expired at start")
+
     _open_sidebar_search(page)
-    editable = _visible_search_editable(page, timeout_ms=1_500)
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out while opening sidebar search")
+
+    editable = _visible_search_editable(
+        page,
+        timeout_ms=min(1_500, max(200, remaining_ms(1_500))),
+    )
     if editable is None:
         log.error("Could not find WhatsApp search input — UI may have changed.")
         return False
 
-    editable.click()
+    editable.click(timeout=min(5_000, max(250, remaining_ms(5_000))))
     time.sleep(0.05)
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out before typing search query")
+
     if sys.platform == "darwin":
         page.keyboard.press("Meta+a")
     else:
@@ -161,12 +197,24 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
     page.keyboard.press("Backspace")
     # insert_text handles Hebrew, emoji, and mixed scripts reliably vs key-by-key type().
     page.keyboard.insert_text(title)
-    time.sleep(0.4)
 
-    # First search result cell
-    cell = page.locator('[data-testid="cell-frame-container"]').first
-    if cell.count() == 0:
-        cell = page.locator('[role="listitem"]').filter(has_text=re.compile(re.escape(title[: min(20, len(title))]), re.I)).first
+    # Wait for search result list (bounded; avoids sleeping forever when UI is stuck).
+    wait_results_ms = min(12_000, max(400, remaining_ms(12_000)))
+    cells = page.locator('[data-testid="cell-frame-container"]')
+    try:
+        cells.first.wait_for(state="visible", timeout=wait_results_ms)
+    except Exception:
+        pass
+
+    if open_deadline is not None and time.monotonic() >= open_deadline:
+        return bail("timed out waiting for search results after typing title")
+
+    if cells.count() == 0:
+        cell = page.locator('[role="listitem"]').filter(
+            has_text=re.compile(re.escape(title[: min(20, len(title))]), re.I)
+        ).first
+    else:
+        cell = cells.first
 
     if cell.count() == 0:
         log.warning("No search result for chat title substring: %s", title)
@@ -175,6 +223,8 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
 
     # Cookie / update / “OK” overlays often block the first search-result click.
     for _ in range(4):
+        if open_deadline is not None and time.monotonic() >= open_deadline:
+            return bail("timed out while dismissing modal overlays")
         dlg = page.locator('[role="dialog"][aria-modal="true"]')
         if dlg.count() == 0:
             break
@@ -182,14 +232,20 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
         time.sleep(0.2)
     time.sleep(0.15)
 
+    click_budget = min(20_000, max(300, remaining_ms(20_000)))
+    if open_deadline is not None and click_budget < 400:
+        return bail("insufficient time left to click search result")
+
     try:
-        cell.click(timeout=15_000)
+        cell.click(timeout=click_budget)
     except Exception as exc:
         log.warning("Could not click search result for %r: %s", title, exc)
         page.keyboard.press("Escape")
         return False
 
-    time.sleep(settle_ms / 1000)
+    settle_s = min(settle_ms / 1000.0, max(0.0, remaining_ms(60_000) / 1000.0))
+    if settle_s > 0:
+        time.sleep(settle_s)
     page.keyboard.press("Escape")
     return True
 
