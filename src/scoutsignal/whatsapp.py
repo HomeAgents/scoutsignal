@@ -173,7 +173,22 @@ def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
         page.keyboard.press("Escape")
         return False
 
-    cell.click()
+    # Cookie / update / “OK” overlays often block the first search-result click.
+    for _ in range(4):
+        dlg = page.locator('[role="dialog"][aria-modal="true"]')
+        if dlg.count() == 0:
+            break
+        page.keyboard.press("Escape")
+        time.sleep(0.2)
+    time.sleep(0.15)
+
+    try:
+        cell.click(timeout=15_000)
+    except Exception as exc:
+        log.warning("Could not click search result for %r: %s", title, exc)
+        page.keyboard.press("Escape")
+        return False
+
     time.sleep(settle_ms / 1000)
     page.keyboard.press("Escape")
     return True
