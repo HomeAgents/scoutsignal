@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import BrowserContext, Locator, Page, Playwright, sync_playwright
 
 from scoutsignal.config_loader import BrowserConfig
 
@@ -50,32 +50,89 @@ def wait_for_whatsapp_ready(page: Page, timeout_ms: int = 180_000) -> None:
     page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 60_000))
 
 
+def _visible_search_editable(page: Page, timeout_ms: int = 500) -> Optional[Locator]:
+    """
+    Find the chat-list / new-chat search box. WhatsApp changes DOM often; try several selectors.
+    """
+    candidates: list[Locator] = [
+        page.locator('div[contenteditable="true"][aria-label="Search name or number"]'),
+        page.locator('[data-testid="chat-list-search"] [contenteditable="true"]'),
+        page.locator('[data-testid="chat-list-search"]').locator('[contenteditable="true"]'),
+        page.locator("#pane-side").locator('[contenteditable="true"][role="textbox"]'),
+        page.locator("#pane-side div[contenteditable=\"true\"]").first,
+        page.locator('div[contenteditable="true"][data-tab="3"]'),
+        page.get_by_role("combobox", name=re.compile(r"search", re.I)),
+        page.get_by_role("textbox", name=re.compile(r"search", re.I)),
+    ]
+    for loc in candidates:
+        try:
+            first = loc.first
+            if first.is_visible(timeout=timeout_ms):
+                return first
+        except Exception:
+            continue
+    return None
+
+
+def _open_sidebar_search(page: Page) -> None:
+    """Dismiss overlays, focus sidebar, try shortcut / buttons so search UI appears."""
+    page.keyboard.press("Escape")
+    time.sleep(0.15)
+    try:
+        page.locator("#pane-side").first.click(timeout=3_000)
+        time.sleep(0.1)
+    except Exception:
+        pass
+
+    if sys.platform == "darwin":
+        page.keyboard.press("Meta+k")
+    else:
+        page.keyboard.press("Control+k")
+    time.sleep(0.45)
+
+    editable = _visible_search_editable(page, timeout_ms=800)
+    if editable is not None:
+        return
+
+    # Click header search / new-chat entry points (labels vary by locale).
+    for label in (
+        "Search",
+        "חיפוש",
+        "Search or start new chat",
+        "New chat",
+        "צ'אט חדש",
+    ):
+        try:
+            btn = page.get_by_role("button", name=re.compile(re.escape(label), re.I))
+            if btn.count() and btn.first.is_visible(timeout=400):
+                btn.first.click()
+                time.sleep(0.35)
+                if _visible_search_editable(page, timeout_ms=600) is not None:
+                    return
+        except Exception:
+            continue
+
+    # Icon-based (fragile but common on older builds)
+    for sel in ('[data-icon="search"]', '[data-testid="chat-list-search"]'):
+        try:
+            el = page.locator(sel).first
+            if el.is_visible(timeout=400):
+                el.click()
+                time.sleep(0.35)
+                if _visible_search_editable(page, timeout_ms=600) is not None:
+                    return
+        except Exception:
+            continue
+
+
 def open_chat_by_title(page: Page, title: str, settle_ms: int = 800) -> bool:
     """
     Use the sidebar search to open a chat. `title` should be a unique substring
     of the chat name as shown in WhatsApp.
     """
-    if sys.platform == "darwin":
-        page.keyboard.press("Meta+k")
-    else:
-        page.keyboard.press("Control+k")
-    time.sleep(0.2)
-
-    search_root = page.locator('[data-testid="chat-list-search"]')
-    editable = search_root.locator('[contenteditable="true"]').first
-    if editable.count() == 0:
-        editable = page.locator('div[contenteditable="true"][data-tab="3"]').first
-    if editable.count() == 0:
-        # Fallback: click sidebar search icon
-        for label in ("Search", "חיפוש"):
-            btn = page.get_by_role("button", name=re.compile(re.escape(label), re.I))
-            if btn.count():
-                btn.first.click()
-                time.sleep(0.2)
-                break
-        editable = page.locator('[data-testid="chat-list-search"] [contenteditable="true"]').first
-
-    if editable.count() == 0:
+    _open_sidebar_search(page)
+    editable = _visible_search_editable(page, timeout_ms=1_500)
+    if editable is None:
         log.error("Could not find WhatsApp search input — UI may have changed.")
         return False
 
