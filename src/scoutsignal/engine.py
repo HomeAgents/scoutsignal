@@ -16,7 +16,14 @@ from scoutsignal.matcher import (
     first_http_url,
     match_message,
 )
-from scoutsignal.reporter import ChatScanSummary, format_hit_lines, format_scan_report, send_digest_email
+from scoutsignal.reporter import (
+    ChatScanSummary,
+    format_hit_lines,
+    format_hit_lines_html,
+    format_scan_report,
+    format_scan_report_html,
+    send_digest_email,
+)
 from scoutsignal.state import StateStore
 from scoutsignal.whatsapp import (
     WhatsAppSession,
@@ -35,10 +42,22 @@ def _scan_exc_email_prefix(scan_exc: Optional[BaseException]) -> str:
         return ""
     if isinstance(scan_exc, PlaywrightTimeoutError):
         return (
-            "NOTE: WhatsApp Web hit a browser timeout (slow UI, network, or a popup blocking clicks). "
-            "Partial results are below; close any overlay on WhatsApp and run again.\n\n"
+            "Important: WhatsApp Web hit a browser timeout (slow connection, heavy UI, or a dialog "
+            "blocking the page). The report below may be incomplete. Close any pop-up on WhatsApp Web "
+            "and run ScoutSignal again.\n\n"
         )
-    return f"NOTE: Scan ended early ({type(scan_exc).__name__}). Partial results below.\n\n"
+    return (
+        f"Important: The scan stopped early ({type(scan_exc).__name__}). "
+        "Partial results follow; check logs or re-run after fixing the issue.\n\n"
+    )
+
+
+def _hit_subject(n: int) -> str:
+    if n == 0:
+        return "ScoutSignal report — no new listings"
+    if n == 1:
+        return "ScoutSignal report — 1 new listing"
+    return f"ScoutSignal report — {n} new listings"
 
 
 def _emit_scan_email(
@@ -65,7 +84,12 @@ def _emit_scan_email(
             log.info(
                 "Dry-run: would send summary email:\n%s%s",
                 prefix,
-                format_scan_report(list(cfg.defaults.include_keywords), summaries, job_tuples),
+                format_scan_report(
+                    list(cfg.defaults.include_keywords),
+                    summaries,
+                    job_tuples,
+                    keyword_watch=cfg.defaults.keyword_watch or None,
+                ),
             )
         elif hits:
             log.info(
@@ -78,16 +102,35 @@ def _emit_scan_email(
         return
 
     if cfg.email.always_send_summary:
-        body = prefix + format_scan_report(list(cfg.defaults.include_keywords), summaries, job_tuples)
+        body = prefix + format_scan_report(
+            list(cfg.defaults.include_keywords),
+            summaries,
+            job_tuples,
+            keyword_watch=cfg.defaults.keyword_watch or None,
+        )
+        body_html = format_scan_report_html(
+            list(cfg.defaults.include_keywords),
+            summaries,
+            job_tuples,
+            notice_plain=prefix,
+            keyword_watch=cfg.defaults.keyword_watch or None,
+        )
         send_digest_email(
             cfg.email,
-            subject=f"Scan: {len(hits)} job hit(s)",
+            subject=_hit_subject(len(hits)),
             body_text=body,
+            body_html=body_html,
         )
         log.info("Sent summary email (%s job hits).", len(hits))
     elif hits:
         body = prefix + format_hit_lines(job_tuples)
-        send_digest_email(cfg.email, subject=f"{len(hits)} new match(es)", body_text=body)
+        body_html = format_hit_lines_html(job_tuples, notice_plain=prefix)
+        send_digest_email(
+            cfg.email,
+            subject=_hit_subject(len(hits)),
+            body_text=body,
+            body_html=body_html,
+        )
         log.info("Sent email with %s hits.", len(hits))
     else:
         log.info("No new matches (email.always_send_summary is false; skipping email).")

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Two-slot daily runner (example): polls every 30 minutes while the Mac is awake.
+  Replace /REPLACE/WITH/... paths. Set macOS Time Zone to match TZ below (e.g. Jerusalem).
+
+  Do not put SMTP passwords here — use scoutsignal-config/.env (loaded by ScoutSignal).
+
+  Install:
+    cp com.scoutsignal.two-slot-interval.example.plist ~/Library/LaunchAgents/com.scoutsignal.two-slot-interval.plist
+    launchctl load ~/Library/LaunchAgents/com.scoutsignal.two-slot-interval.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.scoutsignal.two-slot-interval</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/scoutsignal-two-slot.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/scoutsignal-two-slot.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>TZ</key>
+    <string>Asia/Jerusalem</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/REPLACE/WITH/scoutsignal/extras/daily_two_slot.py</string>
+    <string>--state-file</string>
+    <string>/REPLACE/WITH/scoutsignal-config/.daily-two-slot-state.json</string>
+    <string>--morning-start-hour</string>
+    <string>9</string>
+    <string>--morning-start-minute</string>
+    <string>0</string>
+    <string>--afternoon-start-hour</string>
+    <string>15</string>
+    <string>--afternoon-start-minute</string>
+    <string>0</string>
+    <string>--log-file</string>
+    <string>/REPLACE/WITH/scoutsignal-config/.scoutsignal/logs/two-slot-decisions.log</string>
+    <string>--</string>
+    <string>/bin/bash</string>
+    <string>/REPLACE/WITH/scoutsignal/extras/scoutsignal-run.sh</string>
+  </array>
+</dict>
+</plist>

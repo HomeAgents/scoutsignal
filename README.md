@@ -113,7 +113,7 @@ Use **`headless: true`** only after a **headed** run with the same profile opens
 ## Important
 
 - Automating **WhatsApp Web** may conflict with **Meta’s terms**; use at your own risk.
-- **Do not** commit **`.env`**, real **`config.yaml`**, or **`.scoutsignal/`** to public repos.
+- **Do not** commit **`.env`**, real **`config.yaml`**, **`chats.yaml`** with private group names, **`.daily-two-slot-state.json`**, or **`.scoutsignal/`** to public repos. Ship only **`extras/*.example.plist`** placeholders (`/REPLACE/WITH/...`) in Git; keep plist copies with real paths private or outside the repo.
 - Error **screenshots** may contain private chat pixels; disable with **`diagnostics.error_screenshots: false`** if undesired.
 
 ---
@@ -146,7 +146,7 @@ scoutsignal run --config config.yaml --chats chats.yaml --loop
 
 ## Maximum automation (macOS)
 
-For **daily unattended** runs: use **`extras/scoutsignal-run.sh`** + **`extras/com.scoutsignal.daily.plist`** (see **`extras/README.md`**). Put SMTP secrets in **`~/scoutsignal-config/.env`** only; edit plist **absolute paths** and **calendar time**; `launchctl load` the agent.
+For **daily unattended** runs: use **`extras/scoutsignal-run.sh`** with either **`extras/com.scoutsignal.daily.plist`** (fixed times) or **`extras/daily_two_slot.py`** + **`extras/com.scoutsignal.two-slot-interval.example.plist`** (two runs per day while awake — see **`extras/README.md`**). Put SMTP secrets in **`~/scoutsignal-config/.env`** only; edit plist paths and times; load **one** scheduling approach unless you intend overlapping scans.
 
 Also set **`browser.extra_chromium_args`** in `config.yaml` (see `config.example.yaml`) to reduce Chromium first-run noise. Use **`headless: true`** only after a **logged-in** profile works headless on your machine.
 

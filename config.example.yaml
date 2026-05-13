@@ -23,13 +23,20 @@ run:
   open_chat_timeout_seconds: 300
 
 defaults:
-  include_keywords:
-    - DevOps
-    - SRE
-    - Platform
-    - Infrastructure
-    - Cloud
-    - Engineering Manager
+  # Extra phrases only if you need something not listed in keyword_watch (merged after watch phrases).
+  include_keywords: []
+  # Recommended: define roles here. Each row = Position + Language (EN / HE) + combinations (match substrings).
+  # Duplicate (position, language) blocks in YAML are merged into one email row.
+  keyword_watch:
+    - position: DevOps Manager
+      language: EN
+      combinations:
+        - DevOps manager
+        - Head of DevOps
+    - position: DevOps Manager
+      language: HE
+      combinations:
+        - מנהל DevOps
   exclude_keywords: []
   require_url: false
   min_text_length: 15

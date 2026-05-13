@@ -10,3 +10,4 @@ __pycache__/
 .scoutsignal/
 .DS_Store
 *.egg-info/
+.daily-two-slot-state.json

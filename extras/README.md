@@ -38,16 +38,31 @@ Unload:
 launchctl unload ~/Library/LaunchAgents/com.scoutsignal.daily.plist
 ```
 
-## 4. Interval agent (`com.scoutsignal.example.plist`)
+## 4. Two-slot interval (`daily_two_slot.py` + `com.scoutsignal.two-slot-interval.example.plist`)
+
+For **laptops that sleep**: run every **30 minutes** while awake, but only execute ScoutSignal **once before** your afternoon boundary and **once from** that boundary onward (per calendar day in `TZ`). Optional **catch-up** runs a missed morning slot immediately before the afternoon slot if you first wake after the boundary.
+
+1. Replace **`/REPLACE/WITH/...`** in **`com.scoutsignal.two-slot-interval.example.plist`** with absolute paths (repo `extras/`, your config dir, log dir under config).
+2. Keep **`SCOUTSIGNAL_SMTP_PASSWORD`** in **`$SCOUTSIGNAL_CONFIG_DIR/.env`** only (same as `scoutsignal-run.sh`).
+3. Install:
+
+```bash
+cp com.scoutsignal.two-slot-interval.example.plist ~/Library/LaunchAgents/com.scoutsignal.two-slot-interval.plist
+launchctl load ~/Library/LaunchAgents/com.scoutsignal.two-slot-interval.plist
+```
+
+Do **not** load this and the fixed-time **`com.scoutsignal.daily`** at the same time unless you intend duplicate scans.
+
+## 5. Interval agent (`com.scoutsignal.example.plist`)
 
 Use **`StartInterval`** (seconds) if you want scans **every N minutes** while the Mac is awake — set **N ≥ `run.poll_interval_seconds`** in `config.yaml`. Same path / `.env` rules as above.
 
-## 5. Headless + Chromium flags (automation)
+## 6. Headless + Chromium flags (automation)
 
 - In **`config.yaml`**, set **`browser.headless: true`** only **after** you confirm scans work headless with your logged-in profile (WhatsApp sometimes behaves differently headless).
 - **`browser.extra_chromium_args`** (see `config.example.yaml`) reduces first-run popups; ScoutSignal passes them to Playwright’s persistent context.
 
-## 6. Reality check
+## 7. Reality check
 
 - **Sleeping Mac:** `launchd` often **does not** fire on a closed laptop at the scheduled time. Use a **desktop**, leave the Mac **awake**, or schedule when it is on.
 - **WhatsApp** may occasionally require **re-linking** — plan for rare manual intervention.

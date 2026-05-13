@@ -11,8 +11,11 @@ set -euo pipefail
 
 CONFIG_DIR="${SCOUTSIGNAL_CONFIG_DIR:-${HOME}/scoutsignal-config}"
 VENV_BIN="${SCOUTSIGNAL_VENV_BIN:-${HOME}/scoutsignal/.venv/bin/scoutsignal}"
-# shellcheck disable=SC2206
-EXTRA=(${SCOUTSIGNAL_EXTRA_ARGS:-})
+declare -a EXTRA=()
+if [[ -n "${SCOUTSIGNAL_EXTRA_ARGS:-}" ]]; then
+  # shellcheck disable=SC2206
+  EXTRA=(${SCOUTSIGNAL_EXTRA_ARGS})
+fi
 
 if [[ ! -x "$VENV_BIN" ]]; then
   echo "scoutsignal-run.sh: missing or non-executable VENV_BIN: $VENV_BIN" >&2
@@ -23,7 +26,14 @@ if [[ ! -f "$CONFIG_DIR/config.yaml" ]] || [[ ! -f "$CONFIG_DIR/chats.yaml" ]]; 
   exit 2
 fi
 
-exec "$VENV_BIN" run \
-  --config "$CONFIG_DIR/config.yaml" \
-  --chats "$CONFIG_DIR/chats.yaml" \
-  "${EXTRA[@]}"
+# With `set -u`, an empty EXTRA array makes "${EXTRA[@]}" error on some bash versions.
+if ((${#EXTRA[@]} > 0)); then
+  exec "$VENV_BIN" run \
+    --config "$CONFIG_DIR/config.yaml" \
+    --chats "$CONFIG_DIR/chats.yaml" \
+    "${EXTRA[@]}"
+else
+  exec "$VENV_BIN" run \
+    --config "$CONFIG_DIR/config.yaml" \
+    --chats "$CONFIG_DIR/chats.yaml"
+fi

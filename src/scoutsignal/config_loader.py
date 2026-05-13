@@ -1,12 +1,100 @@
 from __future__ import annotations
 
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 import yaml
 from dotenv import load_dotenv
+
+
+@dataclass
+class KeywordWatchRow:
+    """One email row: position (role label), language code, phrases to match."""
+
+    position: str
+    language: str
+    combinations: list[str]
+
+
+def _keyword_phrase_key(phrase: str) -> str:
+    """Same normalization as matcher substring checks (NFC + lower + collapse spaces)."""
+    s = " ".join((phrase or "").split()).strip().lower()
+    return unicodedata.normalize("NFC", s)
+
+
+def parse_keyword_watch(raw: Any) -> Tuple[list[KeywordWatchRow], list[str]]:
+    """
+    Parse defaults.keyword_watch from YAML into rows + flattened unique phrases (match order).
+    Each item: { position, language, combinations: [str, ...] }
+
+    Multiple YAML entries with the same position (case-insensitive) and language are merged
+    into one row (combinations concatenated, de-duplicated within the row).
+    Phrases that differ only by case/spacing are de-duplicated (first spelling kept).
+    """
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        raise ValueError("defaults.keyword_watch must be a list (or omit it)")
+
+    buckets: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
+    flat: list[str] = []
+    seen_norm_global: set[str] = set()
+
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"defaults.keyword_watch[{i}] must be a mapping")
+        pos = str(item.get("position") or "").strip()
+        lang = str(item.get("language") or "").strip().upper()
+        combos = item.get("combinations")
+        if combos is None:
+            combos = item.get("phrases")
+        if not isinstance(combos, list):
+            raise ValueError(f"defaults.keyword_watch[{i}]: 'combinations' must be a list")
+        phrases = [str(p).strip() for p in combos if str(p).strip()]
+        if not pos:
+            raise ValueError(f"defaults.keyword_watch[{i}]: non-empty 'position' is required")
+        if not lang:
+            raise ValueError(f"defaults.keyword_watch[{i}]: non-empty 'language' is required (e.g. EN or HE)")
+        key = (pos.lower(), lang)
+        if key not in buckets:
+            buckets[key] = {"position": pos, "phrases": [], "seen_norm": set()}
+        bucket = buckets[key]
+        bucket_phrases: list[str] = bucket["phrases"]
+        seen_in_bucket: set[str] = bucket["seen_norm"]
+        for p in phrases:
+            pk = _keyword_phrase_key(p)
+            if pk in seen_in_bucket:
+                continue
+            seen_in_bucket.add(pk)
+            bucket_phrases.append(p)
+            if pk not in seen_norm_global:
+                seen_norm_global.add(pk)
+                flat.append(p)
+
+    rows = [
+        KeywordWatchRow(position=str(v["position"]), language=str(k[1]), combinations=list(v["phrases"]))
+        for k, v in buckets.items()
+    ]
+    return rows, flat
+
+
+def merge_include_keywords(watch_flat: list[str], yaml_list: list[str]) -> list[str]:
+    """Phrases from keyword_watch first, then any extra include_keywords, de-duplicated by normalized text."""
+    out: list[str] = []
+    seen_norm: set[str] = set()
+    for p in watch_flat + yaml_list:
+        p = str(p).strip()
+        if not p:
+            continue
+        pk = _keyword_phrase_key(p)
+        if pk in seen_norm:
+            continue
+        seen_norm.add(pk)
+        out.append(p)
+    return out
 
 
 @dataclass
@@ -33,6 +121,8 @@ class RunConfig:
 @dataclass
 class DefaultsConfig:
     include_keywords: list[str] = field(default_factory=list)
+    # Optional matrix for email + maintenance; flattened into include_keywords at load time.
+    keyword_watch: list[KeywordWatchRow] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     require_url: bool = False
     min_text_length: int = 15
@@ -172,6 +262,10 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
         extra_raw = []
     extra_chromium_args = [str(x) for x in extra_raw if str(x).strip()]
 
+    watch_rows, watch_flat = parse_keyword_watch(defaults.get("keyword_watch"))
+    inc_yaml = [str(x).strip() for x in (defaults.get("include_keywords") or []) if str(x).strip()]
+    merged_keywords = merge_include_keywords(watch_flat, inc_yaml)
+
     return AppConfig(
         browser=BrowserConfig(
             user_data_dir=_expand(str(ud)),
@@ -191,7 +285,8 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             ),
         ),
         defaults=DefaultsConfig(
-            include_keywords=list(defaults.get("include_keywords") or []),
+            include_keywords=merged_keywords,
+            keyword_watch=watch_rows,
             exclude_keywords=list(defaults.get("exclude_keywords") or []),
             require_url=bool(defaults.get("require_url", False)),
             min_text_length=int(defaults.get("min_text_length", 15)),
