@@ -2,7 +2,7 @@
 
 **ScoutSignal** is a local Python CLI that drives **WhatsApp Web** with **Playwright** (persistent Chromium profile), opens only the **chats you list**, scrapes recent messages, applies **keyword / URL / length** filters, **dedupes** with **SQLite**, and sends **SMTP** digests when new posts match your rules. Optionally it emails a **short scan summary** after every run (including zero new matches) when **`email.always_send_summary`** is enabled.
 
-> **Repo layout:** this tree is intended for **GitHub** (e.g. `~/GitHub/scoutsignal`). **Secrets and WhatsApp state** belong in a **separate config directory** (e.g. `~/scoutsignal-config`) — never commit `.env`, `config.yaml` with real SMTP, or `.scoutsignal/` browser profiles.
+> **Repo layout:** app code lives at [github.com/HomeAgents/scoutsignal](https://github.com/HomeAgents/scoutsignal). **Secrets and WhatsApp state** belong in a **separate config directory** (e.g. `~/scoutsignal-config`, [HomeAgents/scoutsignal-config](https://github.com/HomeAgents/scoutsignal-config)) — never commit `.env`, `config.yaml` with real SMTP, or `.scoutsignal/` browser profiles.
 
 ---
 
@@ -152,13 +152,17 @@ Also set **`browser.extra_chromium_args`** in `config.yaml` (see `config.example
 
 **Interval** scans: **`extras/com.scoutsignal.example.plist`** with **`StartInterval`**.
 
-## Publishing to GitHub
+## GitHub
 
-From this folder (after creating an empty repo on GitHub):
+| Repo | URL |
+|------|-----|
+| ScoutSignal (this app) | https://github.com/HomeAgents/scoutsignal |
+| Config (local, private) | https://github.com/HomeAgents/scoutsignal-config |
 
 ```bash
-cd ~/GitHub/scoutsignal
-git remote add origin https://github.com/<you>/<repo>.git
+git clone https://github.com/HomeAgents/scoutsignal.git
+git clone https://github.com/HomeAgents/scoutsignal-config.git ~/scoutsignal-config
+cd scoutsignal && git remote -v   # origin should point at HomeAgents/scoutsignal
 git push -u origin main
 ```
 

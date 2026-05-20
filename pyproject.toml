@@ -14,6 +14,11 @@ dependencies = [
   "python-dotenv>=1.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/HomeAgents/scoutsignal"
+Repository = "https://github.com/HomeAgents/scoutsignal"
+Issues = "https://github.com/HomeAgents/scoutsignal/issues"
+
 [project.scripts]
 scoutsignal = "scoutsignal.cli:main"
 
