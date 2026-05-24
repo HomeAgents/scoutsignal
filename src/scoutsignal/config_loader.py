@@ -97,6 +97,13 @@ def merge_include_keywords(watch_flat: list[str], yaml_list: list[str]) -> list[
     return out
 
 
+# WhatsApp Web rejects Playwright's default headless UA with an "update Chrome" gate page.
+DEFAULT_HEADLESS_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 @dataclass
 class BrowserConfig:
     user_data_dir: Path
@@ -104,6 +111,8 @@ class BrowserConfig:
     channel: Optional[str] = None
     # BCP-47 locale (e.g. he-IL for Hebrew WhatsApp UI, en-US default).
     locale: str = "en-US"
+    # Override Chromium user agent (required for headless WhatsApp Web on Linux).
+    user_agent: Optional[str] = None
     # Extra Chromium CLI flags (e.g. --no-first-run) for quieter unattended launches.
     extra_chromium_args: List[str] = field(default_factory=list)
 
@@ -136,8 +145,12 @@ class EmailConfig:
     use_tls: bool = True
     # Mailbox used for SMTP auth. May be `addr@domain` or `Display Name <addr@domain>`.
     from_addr: str = ""
-    # Shown in clients as "From: … <addr>"; replies go to the mailbox in from_addr. Empty = no display name.
-    from_display_name: str = "(ScoutSignal)"
+    # Shown in clients as "From: … <addr>"; SMTP auth uses from_addr. Replies use reply_to_addr when no_reply.
+    from_display_name: str = "(Do Not Reply) ScoutSignal"
+    # When true (default), Reply-To is a non-monitored address so replies are not delivered.
+    no_reply: bool = True
+    # Optional override for Reply-To when no_reply is true (default: no-reply@do-not-reply.invalid).
+    reply_to_addr: Optional[str] = None
     to_addrs: list[str] = field(default_factory=list)
     subject_prefix: str = "[ScoutSignal] "
     password_env: str = "SCOUTSIGNAL_SMTP_PASSWORD"
@@ -201,11 +214,14 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 def _load_from_display_name(email: dict) -> str:
     if "from_display_name" not in email:
-        return "(ScoutSignal)"
+        return "(Do Not Reply) ScoutSignal"
     v = email["from_display_name"]
     if v is None:
-        return "(ScoutSignal)"
+        return "(Do Not Reply) ScoutSignal"
     return str(v).strip()
+
+
+NO_REPLY_ADDRESS = "no-reply@do-not-reply.invalid"
 
 
 def smtp_mailbox_for_from_addr(from_addr: str) -> str:
@@ -266,12 +282,19 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
     inc_yaml = [str(x).strip() for x in (defaults.get("include_keywords") or []) if str(x).strip()]
     merged_keywords = merge_include_keywords(watch_flat, inc_yaml)
 
+    headless = bool(browser.get("headless", False))
+    ua_raw = browser.get("user_agent")
+    user_agent = str(ua_raw).strip() if ua_raw else None
+    if headless and not user_agent:
+        user_agent = DEFAULT_HEADLESS_USER_AGENT
+
     return AppConfig(
         browser=BrowserConfig(
             user_data_dir=_expand(str(ud)),
-            headless=bool(browser.get("headless", False)),
+            headless=headless,
             channel=browser.get("channel"),
             locale=str(browser.get("locale") or "en-US"),
+            user_agent=user_agent,
             extra_chromium_args=extra_chromium_args,
         ),
         run=RunConfig(
@@ -298,6 +321,12 @@ def load_app_config(config_path: Path, chats_path: Path) -> AppConfig:
             use_tls=bool(email.get("use_tls", True)),
             from_addr=str(email.get("from_addr", "")),
             from_display_name=_load_from_display_name(email),
+            no_reply=bool(email.get("no_reply", True)),
+            reply_to_addr=(
+                str(email["reply_to_addr"]).strip()
+                if email.get("reply_to_addr")
+                else None
+            ),
             to_addrs=list(email.get("to_addrs") or []),
             subject_prefix=str(email.get("subject_prefix", "[ScoutSignal] ")),
             password_env=str(email.get("password_env", "SCOUTSIGNAL_SMTP_PASSWORD")),

@@ -30,32 +30,38 @@ class ScrapedMessage:
 
 def _launch_context(p: Playwright, cfg: BrowserConfig) -> BrowserContext:
     cfg.user_data_dir.mkdir(parents=True, exist_ok=True)
+    args = ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"]
+    if cfg.extra_chromium_args:
+        args.extend(cfg.extra_chromium_args)
     kwargs: dict = {
         "user_data_dir": str(cfg.user_data_dir),
         "headless": cfg.headless,
         "viewport": {"width": 1280, "height": 900},
         "locale": cfg.locale,
+        "args": args,
     }
     if cfg.channel:
         kwargs["channel"] = cfg.channel
-    if cfg.extra_chromium_args:
-        kwargs["args"] = list(cfg.extra_chromium_args)
+    if cfg.user_agent:
+        kwargs["user_agent"] = cfg.user_agent
     return p.chromium.launch_persistent_context(**kwargs)
 
 
 def wait_for_whatsapp_ready(page: Page, timeout_ms: int = 180_000) -> None:
     """Wait until chat list / main UI is usable (after QR if needed)."""
-    # QR canvas disappears when logged in; chat list appears.
-    try:
-        page.wait_for_selector("#pane-side", timeout=timeout_ms)
-        return
-    except Exception:
-        pass
-    try:
-        page.wait_for_selector('[data-testid="chat-list"]', timeout=10_000)
-        return
-    except Exception:
-        pass
+    ready_selectors = (
+        "#pane-side",
+        '[data-testid="chat-list"]',
+        'input[aria-label*="Search"]',
+        'input[aria-label*="חיפוש"]',
+    )
+    per_selector_ms = max(5_000, timeout_ms // len(ready_selectors))
+    for sel in ready_selectors:
+        try:
+            page.wait_for_selector(sel, timeout=per_selector_ms)
+            return
+        except Exception:
+            continue
     page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 60_000))
 
 
@@ -64,14 +70,16 @@ def _visible_search_editable(page: Page, timeout_ms: int = 500) -> Optional[Loca
     Find the chat-list / new-chat search box. WhatsApp changes DOM often; try several selectors.
     """
     candidates: list[Locator] = [
+        page.get_by_role("textbox", name=re.compile(r"search|חיפוש", re.I)),
+        page.locator('input[aria-label*="Search"]'),
+        page.locator('input[aria-label*="חיפוש"]'),
         page.locator('div[contenteditable="true"][aria-label="Search name or number"]'),
         page.locator('[data-testid="chat-list-search"] [contenteditable="true"]'),
         page.locator('[data-testid="chat-list-search"]').locator('[contenteditable="true"]'),
         page.locator("#pane-side").locator('[contenteditable="true"][role="textbox"]'),
         page.locator("#pane-side div[contenteditable=\"true\"]").first,
         page.locator('div[contenteditable="true"][data-tab="3"]'),
-        page.get_by_role("combobox", name=re.compile(r"search", re.I)),
-        page.get_by_role("textbox", name=re.compile(r"search", re.I)),
+        page.get_by_role("combobox", name=re.compile(r"search|חיפוש", re.I)),
     ]
     for loc in candidates:
         try:
@@ -81,6 +89,60 @@ def _visible_search_editable(page: Page, timeout_ms: int = 500) -> Optional[Loca
         except Exception:
             continue
     return None
+
+
+def _dismiss_blocking_layers(page: Page) -> None:
+    """Close modals / side panels that intercept clicks on search results."""
+    page.keyboard.press("Escape")
+    time.sleep(0.1)
+    _click_obvious_dialog_buttons(page)
+    for _ in range(3):
+        dlg = page.locator('[role="dialog"][aria-modal="true"]')
+        if dlg.count() == 0:
+            break
+        page.keyboard.press("Escape")
+        time.sleep(0.15)
+    # WhatsApp often leaves a full-height overlay on the chat list after search.
+    try:
+        page.locator("#pane-side").first.click(timeout=1_500)
+    except Exception:
+        pass
+    time.sleep(0.1)
+
+
+def _open_search_result_row(page: Page, cell: Locator, title: str, click_budget: int) -> bool:
+    """
+    Open a search hit via title span, row click, or keyboard (ArrowDown + Enter).
+  """
+    _dismiss_blocking_layers(page)
+
+    title_span = cell.locator('[data-testid="cell-frame-title"]')
+    if title_span.count() > 0:
+        try:
+            title_span.first.click(timeout=min(8_000, click_budget), force=True)
+            return True
+        except Exception:
+            pass
+
+    try:
+        cell.click(timeout=click_budget, force=True)
+        return True
+    except Exception as exc:
+        log.debug("Row click failed for %r: %s — trying keyboard", title, exc)
+
+    _dismiss_blocking_layers(page)
+    try:
+        cell.focus(timeout=2_000)
+    except Exception:
+        pass
+    page.keyboard.press("ArrowDown")
+    time.sleep(0.2)
+    page.keyboard.press("Enter")
+    time.sleep(0.35)
+    # Open chat shows #main; search-only UI does not.
+    if page.locator("#main").count() > 0:
+        return True
+    return False
 
 
 def _click_obvious_dialog_buttons(page: Page) -> None:
@@ -273,37 +335,14 @@ def open_chat_by_title(
         page.keyboard.press("Escape")
         return False
 
-    _click_obvious_dialog_buttons(page)
-    # Cookie / update / “OK” overlays often block the first search-result click.
-    for _ in range(4):
-        if open_deadline is not None and time.monotonic() >= open_deadline:
-            return bail("timed out while dismissing modal overlays")
-        dlg = page.locator('[role="dialog"][aria-modal="true"]')
-        if dlg.count() == 0:
-            break
-        page.keyboard.press("Escape")
-        time.sleep(0.2)
-    time.sleep(0.15)
-
     click_budget = min(20_000, max(300, remaining_ms(20_000)))
     if open_deadline is not None and click_budget < 400:
         return bail("insufficient time left to click search result")
 
-    try:
-        cell.click(timeout=click_budget)
-    except Exception as exc:
-        log.warning("Could not click search result for %r (%s) — retry after dismiss", title, exc)
-        _click_obvious_dialog_buttons(page)
-        for _ in range(3):
-            page.keyboard.press("Escape")
-            time.sleep(0.15)
-        retry_budget = min(10_000, max(1_000, remaining_ms(10_000)))
-        try:
-            cell.click(timeout=retry_budget, force=True)
-        except Exception as exc2:
-            log.warning("Retry click failed for %r: %s", title, exc2)
-            page.keyboard.press("Escape")
-            return False
+    if not _open_search_result_row(page, cell, title, click_budget):
+        log.warning("Could not open search result for chat %r", title)
+        page.keyboard.press("Escape")
+        return False
 
     settle_s = min(settle_ms / 1000.0, max(0.0, remaining_ms(60_000) / 1000.0))
     if settle_s > 0:

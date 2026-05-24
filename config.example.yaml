@@ -12,6 +12,10 @@ browser:
   extra_chromium_args:
     - "--no-first-run"
     - "--no-default-browser-check"
+    - "--no-sandbox"
+  # Optional override; when headless and omitted, ScoutSignal uses a modern Chrome UA
+  # so WhatsApp Web does not show the "update Chrome" gate page on Linux.
+  # user_agent: "Mozilla/5.0 ..."
 
 run:
   poll_interval_seconds: 300
@@ -47,8 +51,12 @@ email:
   smtp_port: 587
   use_tls: true
   from_addr: "you@gmail.com"
-  # Shown before <you@gmail.com> in the From line; Reply uses that mailbox. Use "" to omit.
-  from_display_name: "(ScoutSignal)"
+  # Shown before <you@gmail.com> in the From line. Replies go to reply_to_addr, not this mailbox.
+  from_display_name: "(Do Not Reply) ScoutSignal"
+  # When true (default), Reply-To is a non-monitored address — replies are not delivered.
+  no_reply: true
+  # Optional Reply-To override when no_reply is true (default: no-reply@do-not-reply.invalid).
+  # reply_to_addr: "no-reply@do-not-reply.invalid"
   to_addrs:
     - "you@gmail.com"
   subject_prefix: "[ScoutSignal] "

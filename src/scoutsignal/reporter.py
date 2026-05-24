@@ -12,13 +12,21 @@ from typing import Iterable, List, Optional
 
 from email.utils import formataddr, parseaddr
 
-from scoutsignal.config_loader import EmailConfig, KeywordWatchRow, smtp_mailbox_for_from_addr
+from scoutsignal.config_loader import EmailConfig, KeywordWatchRow, NO_REPLY_ADDRESS, smtp_mailbox_for_from_addr
+
+
+def _reply_to_header(cfg: EmailConfig, mailbox: str) -> str:
+    if cfg.no_reply:
+        return (cfg.reply_to_addr or NO_REPLY_ADDRESS).strip()
+    if cfg.reply_to_addr and cfg.reply_to_addr.strip():
+        return cfg.reply_to_addr.strip()
+    return mailbox
 
 
 def _from_header_and_mailbox(cfg: EmailConfig) -> tuple[str, str]:
     """
     Build RFC 5322 From header (display name + mailbox) and the SMTP login mailbox.
-    Replies go to the mailbox address.
+    SMTP auth uses the real mailbox; Reply-To is set separately (no-reply by default).
     """
     raw = (cfg.from_addr or "").strip()
     parsed_name, _parsed_addr = parseaddr(raw)
@@ -63,7 +71,10 @@ def send_digest_email(
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"{cfg.subject_prefix}{subject}"
     msg["From"] = from_header
-    msg["Reply-To"] = mailbox
+    msg["Reply-To"] = _reply_to_header(cfg, mailbox)
+    msg["Auto-Submitted"] = "auto-generated"
+    msg["Precedence"] = "bulk"
+    msg["X-Auto-Response-Suppress"] = "All"
     msg["To"] = ", ".join(cfg.to_addrs)
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
     if body_html:
