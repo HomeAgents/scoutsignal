@@ -27,6 +27,7 @@ from scoutsignal.reporter import (
 from scoutsignal.state import StateStore
 from scoutsignal.whatsapp import (
     WhatsAppSession,
+    is_qr_code_visible,
     open_chat_by_title,
     read_open_chat_title,
     save_error_screenshot,
@@ -152,6 +153,7 @@ class Hit:
 
 def run_scan(cfg: AppConfig, *, dry_run: bool) -> list[Hit]:
     store = StateStore(cfg.state.sqlite_path)
+    store.prune_old()
     hits: list[Hit] = []
     summaries: list[ChatScanSummary] = []
     shot_dir = screenshots_dir_for(cfg)
@@ -163,7 +165,24 @@ def run_scan(cfg: AppConfig, *, dry_run: bool) -> list[Hit]:
             page = session.get_or_open_page()
             page_ref[0] = page
             page.goto(cfg.run.whatsapp_url, wait_until="domcontentloaded")
+            time.sleep(3)
+
+            if is_qr_code_visible(page):
+                log.error("WhatsApp session expired — QR code login screen detected.")
+                if cfg.email.enabled and not dry_run:
+                    send_digest_email(
+                        cfg.email,
+                        subject="WhatsApp session expired — action required",
+                        body_text=(
+                            "ScoutSignal detected that the WhatsApp Web session has expired.\n\n"
+                            "Please open the browser profile and re-scan the QR code to restore the session.\n"
+                            "The current scan has been aborted."
+                        ),
+                    )
+                return hits
+
             wait_for_whatsapp_ready(page)
+            time.sleep(2)
 
             try:
                 for chat in cfg.chats:
@@ -175,7 +194,7 @@ def run_scan(cfg: AppConfig, *, dry_run: bool) -> list[Hit]:
 
                     try:
                         open_deadline = time.monotonic() + float(cfg.run.open_chat_timeout_seconds)
-                        if not open_chat_by_title(page, chat.title, open_deadline=open_deadline):
+                        if not open_chat_by_title(page, chat.title, open_deadline=open_deadline, screenshots_dir=shot_dir):
                             log.warning("Skipping chat (could not open): %s", chat.title)
                             summaries.append(
                                 ChatScanSummary(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -200,15 +201,61 @@ def _expand(path_str: str) -> Path:
     return Path(path_str).expanduser().resolve()
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into a copy of *base*.
+
+    - Dict values are merged recursively.
+    - All other types (lists, scalars) in *override* replace the base value.
+    """
+    result = copy.deepcopy(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = copy.deepcopy(val)
+    return result
+
+
+class _IncludeLoader(yaml.SafeLoader):
+    """SafeLoader subclass that supports ``!include path/to/file.yaml``."""
+
+
+def _include_constructor(loader: _IncludeLoader, node: yaml.Node) -> Any:
+    """Load another YAML file relative to the including file."""
+    include_path = Path(loader.name).parent / loader.construct_scalar(node)
+    resolved = include_path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"!include target not found: {resolved}")
+    with resolved.open(encoding="utf-8") as f:
+        return yaml.load(f, _IncludeLoader)  # noqa: S506 – uses our safe subclass
+
+
+_IncludeLoader.add_constructor("!include", _include_constructor)
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
+    """Load a YAML file, resolving ``!include`` tags and ``extends`` base files.
+
+    When the top-level mapping contains an ``extends`` key, the referenced file
+    is loaded first and the current file's values are deep-merged on top. This
+    allows derivative configs (e.g. ``config.vm.yaml``) to share rules with a
+    base file while overriding only what differs.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Missing file: {path}")
     with path.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, _IncludeLoader)
     if data is None:
         return {}
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a YAML mapping at the top level")
+
+    extends_ref = data.pop("extends", None)
+    if extends_ref is not None:
+        base_path = (path.parent / str(extends_ref)).resolve()
+        base_data = load_yaml(base_path)
+        data = _deep_merge(base_data, data)
+
     return data
 
 

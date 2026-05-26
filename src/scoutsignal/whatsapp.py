@@ -47,6 +47,24 @@ def _launch_context(p: Playwright, cfg: BrowserConfig) -> BrowserContext:
     return p.chromium.launch_persistent_context(**kwargs)
 
 
+def is_qr_code_visible(page: Page, timeout_ms: int = 3_000) -> bool:
+    """Return True if WhatsApp Web is showing a QR code login screen (session expired)."""
+    qr_selectors = (
+        '[data-testid="qrcode"]',
+        'canvas[aria-label="Scan me!"]',
+        'canvas[aria-label*="QR"]',
+        'div[data-ref]',  # QR container data attribute
+    )
+    for sel in qr_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=timeout_ms // len(qr_selectors)):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def wait_for_whatsapp_ready(page: Page, timeout_ms: int = 180_000) -> None:
     """Wait until chat list / main UI is usable (after QR if needed)."""
     ready_selectors = (
@@ -59,10 +77,18 @@ def wait_for_whatsapp_ready(page: Page, timeout_ms: int = 180_000) -> None:
     for sel in ready_selectors:
         try:
             page.wait_for_selector(sel, timeout=per_selector_ms)
-            return
+            break
         except Exception:
             continue
-    page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 60_000))
+    else:
+        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 60_000))
+    try:
+        page.locator('[data-testid="cell-frame-container"]').first.wait_for(
+            state="visible", timeout=min(15_000, max(2_000, timeout_ms // 4))
+        )
+    except Exception:
+        pass
+    _click_obvious_dialog_buttons(page)
 
 
 def _visible_search_editable(page: Page, timeout_ms: int = 500) -> Optional[Locator]:
@@ -241,6 +267,7 @@ def open_chat_by_title(
     *,
     open_deadline: Optional[float] = None,
     settle_ms: int = 800,
+    screenshots_dir: Optional[Path] = None,
 ) -> bool:
     """
     Use the sidebar search to open a chat. `title` should be a unique substring
@@ -283,8 +310,14 @@ def open_chat_by_title(
     try:
         editable.click(timeout=min(5_000, max(250, remaining_ms(5_000))))
     except PWTimeoutError:
-        log.warning("Search field click timed out for chat %r", title)
-        return False
+        _dismiss_blocking_layers(page)
+        try:
+            editable.click(timeout=min(3_000, max(250, remaining_ms(3_000))), force=True)
+        except PWTimeoutError:
+            log.warning("Search field click timed out for chat %r (retried with force)", title)
+            if screenshots_dir is not None:
+                save_error_screenshot(page, screenshots_dir, prefix=f"wa-click-fail-{title[:20].replace(' ', '_').replace('/', '_')}")
+            return False
     time.sleep(0.05)
     if open_deadline is not None and time.monotonic() >= open_deadline:
         return bail("timed out before typing search query")

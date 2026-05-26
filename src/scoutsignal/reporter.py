@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 import smtplib
+import time
 from datetime import datetime
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
@@ -13,6 +15,8 @@ from typing import Iterable, List, Optional
 from email.utils import formataddr, parseaddr
 
 from scoutsignal.config_loader import EmailConfig, KeywordWatchRow, NO_REPLY_ADDRESS, smtp_mailbox_for_from_addr
+
+log = logging.getLogger(__name__)
 
 
 def _reply_to_header(cfg: EmailConfig, mailbox: str) -> str:
@@ -80,11 +84,26 @@ def send_digest_email(
     if body_html:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
-    with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=60) as server:
-        if cfg.use_tls:
-            server.starttls()
-        server.login(mailbox, password)
-        server.sendmail(mailbox, cfg.to_addrs, msg.as_string())
+    max_attempts = 3
+    backoff_seconds = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=60) as server:
+                if cfg.use_tls:
+                    server.starttls()
+                server.login(mailbox, password)
+                server.sendmail(mailbox, cfg.to_addrs, msg.as_string())
+            break
+        except (smtplib.SMTPException, OSError) as exc:
+            if attempt == max_attempts:
+                log.error("SMTP send failed after %d attempts.", max_attempts)
+                raise
+            delay = backoff_seconds * (2 ** (attempt - 1))
+            log.warning(
+                "SMTP attempt %d/%d failed (%s). Retrying in %ds…",
+                attempt, max_attempts, exc, delay,
+            )
+            time.sleep(delay)
 
 
 def _cell_plain(s: str, max_len: int = 56) -> str:
